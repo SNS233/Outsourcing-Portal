@@ -479,14 +479,70 @@ def _init_sqlite():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS UserCompletionHistory (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        village_id INTEGER NOT NULL,
+        village_name TEXT NOT NULL,
+        completion_date TEXT NOT NULL,
+        completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        is_active INTEGER DEFAULT 1,
+        status TEXT DEFAULT 'Completed',
+        review_url TEXT,
+        UNIQUE(user_id, village_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS VillageCorrectionAudit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        village_id INTEGER NOT NULL,
+        village_name TEXT NOT NULL,
+        village_code TEXT NOT NULL,
+        previous_person_id INTEGER,
+        previous_person_name TEXT,
+        previous_user_id INTEGER,
+        previous_user_name TEXT,
+        previous_completed_at TIMESTAMP,
+        reopened_by TEXT NOT NULL,
+        reopened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        correction_reason TEXT NOT NULL,
+        new_person_id INTEGER,
+        new_person_name TEXT,
+        new_user_id INTEGER,
+        resolved_at TIMESTAMP,
+        resolved_by TEXT,
+        status TEXT DEFAULT 'Pending Correction'
+    );
+
+    CREATE TABLE IF NOT EXISTS ApplicationSettings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        setting_key TEXT NOT NULL UNIQUE,
+        setting_value TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS IX_Villages_VillageCode ON Villages(village_code);
     CREATE INDEX IF NOT EXISTS IX_Villages_Status ON Villages(kml_status);
     CREATE INDEX IF NOT EXISTS IX_Villages_District ON Villages(district_name);
     CREATE INDEX IF NOT EXISTS IX_Villages_Subdistrict ON Villages(subdistrict_name);
     CREATE INDEX IF NOT EXISTS IX_Villages_AssignedPerson ON Villages(assigned_person_id);
     CREATE INDEX IF NOT EXISTS IX_Villages_WorkStatus ON Villages(work_status);
+    CREATE INDEX IF NOT EXISTS IX_Villages_Zone ON Villages(zone);
     CREATE INDEX IF NOT EXISTS IX_AdminNotifications_IsRead ON AdminNotifications(is_read);
+    CREATE INDEX IF NOT EXISTS IX_UserCompletionHistory_User ON UserCompletionHistory(user_id, completed_at DESC);
+    CREATE INDEX IF NOT EXISTS IX_CorrectionAudit_Village ON VillageCorrectionAudit(village_id);
+    CREATE INDEX IF NOT EXISTS IX_CorrectionAudit_Status ON VillageCorrectionAudit(status);
     """)
+
+    # Seed default ApplicationSettings if missing
+    defaults = [
+        ('marking_portal_url', 'https://generate.snsies.com/'),
+        ('auto_calc_total', 'true'),
+        ('kml_storage_dir', 'uploads/kml'),
+        ('app_name', 'Master Borewell & Tubewell Management Portal')
+    ]
+    for k, v in defaults:
+        cursor.execute("INSERT OR IGNORE INTO ApplicationSettings (setting_key, setting_value) VALUES (?, ?)", (k, v))
 
     # Ensure any missing columns in existing Villages table are added dynamically
     cursor.execute("PRAGMA table_info(Villages)")
@@ -503,17 +559,44 @@ def _init_sqlite():
         ("total_electric_solar", "INTEGER DEFAULT 0"),
         ("raw_geb_data", "TEXT"),
         ("generated_review_url", "TEXT"),
-        ("work_status", "TEXT DEFAULT 'Not Done'")
+        ("work_status", "TEXT DEFAULT 'Not Done'"),
+        ("correction_reason", "TEXT"),
+        ("reopened_at", "TIMESTAMP"),
+        ("reopened_by", "TEXT")
     ]
     for col_name, col_type in migrations:
         if col_name not in existing_cols:
             cursor.execute(f"ALTER TABLE Villages ADD COLUMN {col_name} {col_type}")
+
+    # Ensure is_active and status in UserCompletionHistory table
+    cursor.execute("PRAGMA table_info(UserCompletionHistory)")
+    existing_uch_cols = {row[1] for row in cursor.fetchall()}
+    if "is_active" not in existing_uch_cols:
+        cursor.execute("ALTER TABLE UserCompletionHistory ADD COLUMN is_active INTEGER DEFAULT 1")
+    if "status" not in existing_uch_cols:
+        cursor.execute("ALTER TABLE UserCompletionHistory ADD COLUMN status TEXT DEFAULT 'Completed'")
+    if "review_url" not in existing_uch_cols:
+        cursor.execute("ALTER TABLE UserCompletionHistory ADD COLUMN review_url TEXT")
 
     # Ensure user_id in Persons table
     cursor.execute("PRAGMA table_info(Persons)")
     existing_person_cols = {row[1] for row in cursor.fetchall()}
     if "user_id" not in existing_person_cols:
         cursor.execute("ALTER TABLE Persons ADD COLUMN user_id INTEGER")
+
+    # Ensure inserted_rows and updated_rows in ImportBatches table
+    cursor.execute("PRAGMA table_info(ImportBatches)")
+    existing_batch_cols = {row[1] for row in cursor.fetchall()}
+    batch_migrations = [
+        ("inserted_rows", "INTEGER DEFAULT 0"),
+        ("updated_rows", "INTEGER DEFAULT 0")
+    ]
+    for col_name, col_type in batch_migrations:
+        if col_name not in existing_batch_cols:
+            cursor.execute(f"ALTER TABLE ImportBatches ADD COLUMN {col_name} {col_type}")
+
+    # Backfill inserted_rows if empty but valid_rows exists
+    cursor.execute("UPDATE ImportBatches SET inserted_rows = valid_rows WHERE (inserted_rows IS NULL OR inserted_rows = 0) AND valid_rows > 0")
 
     conn.commit()
     conn.close()

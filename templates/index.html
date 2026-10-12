@@ -19,12 +19,10 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
     <!-- App CSS -->
     <link rel="stylesheet" href="/static/css/style.css">
-    <!-- Immediate Theme Bootstrap (Prevents White Flash) -->
+    <!-- Permanent Light Theme -->
     <script>
-        (function() {
-            var theme = localStorage.getItem('app_theme') || 'light';
-            document.documentElement.setAttribute('data-theme', theme);
-        })();
+        try { localStorage.removeItem('app_theme'); } catch (e) {}
+        document.documentElement.setAttribute('data-theme', 'light');
     </script>
 </head>
 <body data-user-role="{{ user.role }}" data-user-id="{{ user.id }}">
@@ -60,10 +58,6 @@
                 <i data-lucide="user-cog"></i>
                 <span>User Settings</span>
             </button>
-            <button class="nav-item" data-view="villages">
-                <i data-lucide="map-pin"></i>
-                <span>All Villages</span>
-            </button>
             <button class="nav-item" data-view="export">
                 <i data-lucide="file-spreadsheet"></i>
                 <span>Export Excel</span>
@@ -80,6 +74,10 @@
             <button class="nav-item" data-view="user-excel-files">
                 <i data-lucide="file-spreadsheet"></i>
                 <span>Excel Files</span>
+            </button>
+            <button class="nav-item" data-view="user-history">
+                <i data-lucide="history"></i>
+                <span>History</span>
             </button>
             {% endif %}
         </nav>
@@ -128,15 +126,6 @@
                         </div>
                     </div>
                 </div>
-                <button class="btn btn-secondary btn-sm" id="headerThemeToggleBtn" onclick="ThemeManager.toggleTheme()" title="Toggle Dark/Light Mode" style="display: flex; align-items: center; gap: 6px; padding: 6px 12px;">
-                    <i data-lucide="moon" id="headerThemeIcon" style="width: 15px; height: 15px;"></i>
-                    <span id="headerThemeText" style="font-size: 0.8rem;">Theme</span>
-                </button>
-                {% else %}
-                <button class="btn btn-secondary btn-sm" id="userHeaderThemeToggleBtn" onclick="ThemeManager.toggleTheme()" title="Toggle Dark/Light Mode" style="display: flex; align-items: center; gap: 6px; padding: 6px 12px;">
-                    <i data-lucide="moon" id="userHeaderThemeIcon" style="width: 15px; height: 15px;"></i>
-                    <span style="font-size: 0.8rem;">Theme</span>
-                </button>
                 {% endif %}
             </div>
         </header>
@@ -156,53 +145,52 @@
                             </h2>
                             <p style="margin: 2px 0 0 0; font-size: 0.8rem; color: var(--text-secondary, #64748b);">Real-time monitoring of assignments, marking progress, and zone breakdown.</p>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                            <label for="dashboardZoneSelect" style="font-size: 0.84rem; font-weight: 600; color: var(--text-secondary, #475569); display: flex; align-items: center; gap: 6px; margin: 0;">
-                                <i data-lucide="filter" style="width: 14px; height: 14px; color: #2563eb;"></i>
-                                <span>Zone Filter:</span>
-                            </label>
-                            <select id="dashboardZoneSelect" class="form-control" style="width: 220px; padding: 6px 12px; font-size: 0.85rem; font-weight: 500;" onchange="DashboardManager.filterByZone(this.value)">
-                                <option value="">All Zones (Overall)</option>
-                            </select>
-                            <button class="btn btn-secondary btn-sm" onclick="DashboardManager.load()" title="Refresh Dashboard Metrics" style="padding: 6px 10px; display: inline-flex; align-items: center; gap: 4px;">
-                                <i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i>
-                                <span>Refresh</span>
-                            </button>
-                        </div>
                     </div>
                 </div>
 
-                <!-- Streamlined 4 Workflow KPIs -->
-                <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr);">
-                    <div class="stat-card">
+                <!-- 4 Main Clickable Workflow KPIs -->
+                <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 20px;">
+                    <div class="stat-card stat-card-clickable" onclick="DashboardManager.viewDetail('all')" title="Click to view all village records">
                         <div>
                             <div class="stat-label">Total Villages</div>
                             <div class="stat-value" id="statTotalVillages">0</div>
-                            <div class="stat-sub">Complete imported database</div>
+                            <div class="stat-sub" style="display: flex; align-items: center; justify-content: space-between; margin-top: 4px;">
+                                <span>Complete imported database</span>
+                                <span style="color: var(--primary); font-weight: 600; font-size: 0.76rem;">View list &rarr;</span>
+                            </div>
                         </div>
                         <div class="stat-icon bg-blue-light"><i data-lucide="map-pin"></i></div>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card stat-card-clickable" onclick="DashboardManager.viewDetail('pending')" title="Click to view only pending villages">
                         <div>
                             <div class="stat-label">Pending Villages</div>
-                            <div class="stat-value" id="statPendingVillages">0</div>
-                            <div class="stat-sub">Unassigned records</div>
+                            <div class="stat-value" id="statPendingVillages" style="color: #d97706;">0</div>
+                            <div class="stat-sub" style="display: flex; align-items: center; justify-content: space-between; margin-top: 4px;">
+                                <span>Incomplete survey records</span>
+                                <span style="color: #d97706; font-weight: 600; font-size: 0.76rem;">View list &rarr;</span>
+                            </div>
                         </div>
                         <div class="stat-icon bg-amber-light"><i data-lucide="clock"></i></div>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card stat-card-clickable" onclick="DashboardManager.viewDetail('assigned')" title="Click to view assigned villages">
                         <div>
                             <div class="stat-label">Assigned Villages</div>
-                            <div class="stat-value" id="statAssignedVillages">0</div>
-                            <div class="stat-sub">Allocated to surveyors</div>
+                            <div class="stat-value" id="statAssignedVillages" style="color: #4f46e5;">0</div>
+                            <div class="stat-sub" style="display: flex; align-items: center; justify-content: space-between; margin-top: 4px;">
+                                <span>Allocated to surveyors</span>
+                                <span style="color: #4f46e5; font-weight: 600; font-size: 0.76rem;">View list &rarr;</span>
+                            </div>
                         </div>
                         <div class="stat-icon bg-indigo-light"><i data-lucide="user-check"></i></div>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card stat-card-clickable" onclick="DashboardManager.viewDetail('completed')" title="Click to view verified & completed villages">
                         <div>
                             <div class="stat-label">Completed Villages</div>
-                            <div class="stat-value" id="statCompleted">0</div>
-                            <div class="stat-sub">Verified & marked</div>
+                            <div class="stat-value" id="statCompleted" style="color: #059669;">0</div>
+                            <div class="stat-sub" style="display: flex; align-items: center; justify-content: space-between; margin-top: 4px;">
+                                <span>Verified & marked</span>
+                                <span style="color: #059669; font-weight: 600; font-size: 0.76rem;">View list &rarr;</span>
+                            </div>
                         </div>
                         <div class="stat-icon bg-emerald-light"><i data-lucide="check-circle-2"></i></div>
                     </div>
@@ -219,105 +207,255 @@
                     </div>
                 </div>
 
-                <!-- Pie Chart Card: Village Completion Status (Done vs Pending) -->
-                <div class="card" style="margin-bottom: 22px;">
-                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
-                        <h3 class="card-title" style="margin: 0; display: flex; align-items: center; gap: 8px;">
-                            <i data-lucide="pie-chart" style="color: #2563eb;"></i>
-                            <span>Village Completion Status (Done vs Pending)</span>
-                        </h3>
-                        <span class="badge" style="background: rgba(16, 185, 129, 0.1); color: #059669; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 0.78rem; display: inline-flex; align-items: center; gap: 4px;">
-                            <span style="width: 6px; height: 6px; border-radius: 50%; background: #10b981; display: inline-block;"></span>
-                            Live Database Records
-                        </span>
-                    </div>
-                    <div style="display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: 24px; align-items: center;">
-                        <div style="height: 250px; position: relative; display: flex; align-items: center; justify-content: center;">
-                            <canvas id="statusChart"></canvas>
+                <!-- Zone-Wise Insights & Progress Section -->
+                <div class="card" style="margin-bottom: 0;">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 14px; margin-bottom: 18px; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <h3 class="card-title" style="margin: 0; display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="layers" style="color: #2563eb;"></i>
+                                <span>Zone-Wise Insights & Progress</span>
+                            </h3>
+                            <p style="margin: 2px 0 0 0; font-size: 0.8rem; color: var(--text-secondary, #64748b);">
+                                Click any zone card below to open its dedicated view with live KPIs and filtered village records.
+                            </p>
                         </div>
-                        <div style="display: flex; flex-direction: column; gap: 12px; justify-content: center;">
-                            <div style="background: var(--bg-surface, #f8fafc); border: 1px solid var(--border-color, #e2e8f0); border-radius: 8px; padding: 14px 18px; display: flex; justify-content: space-between; align-items: center;">
-                                <div style="display: flex; align-items: center; gap: 10px;">
-                                    <span style="width: 14px; height: 14px; border-radius: 4px; background: #10b981; display: inline-block;"></span>
-                                    <div>
-                                        <div style="font-weight: 600; font-size: 0.92rem; color: var(--text-primary, #0f172a);">Done / Completed</div>
-                                        <div style="font-size: 0.78rem; color: var(--text-secondary, #64748b);">Surveys verified & marked</div>
-                                    </div>
+                    </div>
+
+                    <!-- Total Remaining Villages KPI Card -->
+                    <div class="card stat-card-clickable" onclick="DashboardManager.viewDetail('pending')" style="margin-bottom: 20px; border-left: 4px solid #f59e0b; padding: 16px 20px; background: #ffffff; display: flex; justify-content: space-between; align-items: center; box-shadow: var(--shadow-sm);" title="Click to view all remaining pending villages">
+                        <div>
+                            <div style="font-size: 0.8rem; font-weight: 700; color: #b45309; text-transform: uppercase; letter-spacing: 0.04em; display: flex; align-items: center; gap: 6px;">
+                                <i data-lucide="clock" style="width: 14px; height: 14px;"></i>
+                                <span>Total Remaining Villages</span>
+                            </div>
+                            <div style="font-size: 1.85rem; font-weight: 800; color: #0f172a; margin-top: 4px;" id="statTotalRemaining">0</div>
+                            <div style="font-size: 0.8rem; color: #64748b; margin-top: 2px;">
+                                Total villages whose work is not yet completed across all operational zones
+                            </div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px; pointer-events: none;">
+                                <span>View Incomplete Villages</span>
+                                <i data-lucide="arrow-right" style="width: 14px; height: 14px;"></i>
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- 4 Clickable Zone Cards: GPIC, KPIC, VPIC, RPIC -->
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; margin-bottom: 8px;">
+                        
+                        <!-- GPIC Card -->
+                        <div class="zone-kpi-card zone-card-gpic" id="cardZoneGPIC" onclick="DashboardManager.viewZoneDetail('GPIC')" title="Click to view GPIC zone village records">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span style="font-size: 1.25rem; font-weight: 800; color: #0f172a;">GPIC</span>
+                                    <span class="badge" style="background: rgba(37, 99, 235, 0.1); color: #2563eb; font-weight: 700; font-size: 0.72rem;">Zone</span>
                                 </div>
-                                <div style="text-align: right;">
-                                    <span id="chartDoneCount" style="font-size: 1.35rem; font-weight: 700; color: #059669;">0</span>
-                                    <span id="chartDonePct" style="font-size: 0.8rem; color: #059669; margin-left: 4px;">(0%)</span>
+                                <span style="font-size: 0.95rem; font-weight: 800; color: #2563eb;" id="gpicProgress">0%</span>
+                            </div>
+                            <div style="height: 6px; width: 100%; background: #e2e8f0; border-radius: 999px; overflow: hidden; margin-bottom: 14px;">
+                                <div id="gpicProgressBar" style="height: 100%; width: 0%; background: #2563eb; border-radius: 999px; transition: width 0.3s ease;"></div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 7px; font-size: 0.85rem;">
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Total:</span>
+                                    <strong id="gpicTotal" style="color: #0f172a;">0</strong>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Pending:</span>
+                                    <strong id="gpicPending" style="color: #d97706;">0</strong>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Assigned:</span>
+                                    <strong id="gpicAssigned" style="color: #4f46e5;">0</strong>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Completed:</span>
+                                    <strong id="gpicCompleted" style="color: #059669;">0</strong>
                                 </div>
                             </div>
-                            <div style="background: var(--bg-surface, #f8fafc); border: 1px solid var(--border-color, #e2e8f0); border-radius: 8px; padding: 14px 18px; display: flex; justify-content: space-between; align-items: center;">
-                                <div style="display: flex; align-items: center; gap: 10px;">
-                                    <span style="width: 14px; height: 14px; border-radius: 4px; background: #f59e0b; display: inline-block;"></span>
-                                    <div>
-                                        <div style="font-weight: 600; font-size: 0.92rem; color: var(--text-primary, #0f172a);">Not Done / Pending</div>
-                                        <div style="font-size: 0.78rem; color: var(--text-secondary, #64748b);">Pending survey completion</div>
-                                    </div>
+                            <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: #2563eb; font-weight: 700;">
+                                <span>Click for GPIC details</span>
+                                <i data-lucide="arrow-right" style="width: 14px; height: 14px;"></i>
+                            </div>
+                        </div>
+
+                        <!-- KPIC Card -->
+                        <div class="zone-kpi-card zone-card-kpic" id="cardZoneKPIC" onclick="DashboardManager.viewZoneDetail('KPIC')" title="Click to view KPIC zone village records">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span style="font-size: 1.25rem; font-weight: 800; color: #0f172a;">KPIC</span>
+                                    <span class="badge" style="background: rgba(124, 58, 237, 0.1); color: #7c3aed; font-weight: 700; font-size: 0.72rem;">Zone</span>
                                 </div>
-                                <div style="text-align: right;">
-                                    <span id="chartPendingCount" style="font-size: 1.35rem; font-weight: 700; color: #d97706;">0</span>
-                                    <span id="chartPendingPct" style="font-size: 0.8rem; color: #d97706; margin-left: 4px;">(0%)</span>
+                                <span style="font-size: 0.95rem; font-weight: 800; color: #7c3aed;" id="kpicProgress">0%</span>
+                            </div>
+                            <div style="height: 6px; width: 100%; background: #e2e8f0; border-radius: 999px; overflow: hidden; margin-bottom: 14px;">
+                                <div id="kpicProgressBar" style="height: 100%; width: 0%; background: #7c3aed; border-radius: 999px; transition: width 0.3s ease;"></div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 7px; font-size: 0.85rem;">
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Total:</span>
+                                    <strong id="kpicTotal" style="color: #0f172a;">0</strong>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Pending:</span>
+                                    <strong id="kpicPending" style="color: #d97706;">0</strong>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Assigned:</span>
+                                    <strong id="kpicAssigned" style="color: #4f46e5;">0</strong>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Completed:</span>
+                                    <strong id="kpicCompleted" style="color: #059669;">0</strong>
                                 </div>
                             </div>
-                            <div style="font-size: 0.82rem; color: var(--text-secondary, #64748b); text-align: right; padding-right: 4px;">
-                                Total Database Villages: <strong id="chartTotalCount" style="color: var(--text-primary, #0f172a);">0</strong>
+                            <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: #7c3aed; font-weight: 700;">
+                                <span>Click for KPIC details</span>
+                                <i data-lucide="arrow-right" style="width: 14px; height: 14px;"></i>
                             </div>
+                        </div>
+
+                        <!-- VPIC Card -->
+                        <div class="zone-kpi-card zone-card-vpic" id="cardZoneVPIC" onclick="DashboardManager.viewZoneDetail('VPIC')" title="Click to view VPIC zone village records">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span style="font-size: 1.25rem; font-weight: 800; color: #0f172a;">VPIC</span>
+                                    <span class="badge" style="background: rgba(5, 150, 105, 0.1); color: #059669; font-weight: 700; font-size: 0.72rem;">Zone</span>
+                                </div>
+                                <span style="font-size: 0.95rem; font-weight: 800; color: #059669;" id="vpicProgress">0%</span>
+                            </div>
+                            <div style="height: 6px; width: 100%; background: #e2e8f0; border-radius: 999px; overflow: hidden; margin-bottom: 14px;">
+                                <div id="vpicProgressBar" style="height: 100%; width: 0%; background: #059669; border-radius: 999px; transition: width 0.3s ease;"></div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 7px; font-size: 0.85rem;">
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Total:</span>
+                                    <strong id="vpicTotal" style="color: #0f172a;">0</strong>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Pending:</span>
+                                    <strong id="vpicPending" style="color: #d97706;">0</strong>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Assigned:</span>
+                                    <strong id="vpicAssigned" style="color: #4f46e5;">0</strong>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Completed:</span>
+                                    <strong id="vpicCompleted" style="color: #059669;">0</strong>
+                                </div>
+                            </div>
+                            <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: #059669; font-weight: 700;">
+                                <span>Click for VPIC details</span>
+                                <i data-lucide="arrow-right" style="width: 14px; height: 14px;"></i>
+                            </div>
+                        </div>
+
+                        <!-- RPIC Card -->
+                        <div class="zone-kpi-card zone-card-rpic" id="cardZoneRPIC" onclick="DashboardManager.viewZoneDetail('RPIC')" title="Click to view RPIC zone village records">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span style="font-size: 1.25rem; font-weight: 800; color: #0f172a;">RPIC</span>
+                                    <span class="badge" style="background: rgba(217, 119, 6, 0.1); color: #d97706; font-weight: 700; font-size: 0.72rem;">Zone</span>
+                                </div>
+                                <span style="font-size: 0.95rem; font-weight: 800; color: #d97706;" id="rpicProgress">0%</span>
+                            </div>
+                            <div style="height: 6px; width: 100%; background: #e2e8f0; border-radius: 999px; overflow: hidden; margin-bottom: 14px;">
+                                <div id="rpicProgressBar" style="height: 100%; width: 0%; background: #d97706; border-radius: 999px; transition: width 0.3s ease;"></div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 7px; font-size: 0.85rem;">
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Total:</span>
+                                    <strong id="rpicTotal" style="color: #0f172a;">0</strong>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Pending:</span>
+                                    <strong id="rpicPending" style="color: #d97706;">0</strong>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Assigned:</span>
+                                    <strong id="rpicAssigned" style="color: #4f46e5;">0</strong>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; color: #334155;">
+                                    <span>Completed:</span>
+                                    <strong id="rpicCompleted" style="color: #059669;">0</strong>
+                                </div>
+                            </div>
+                            <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: #d97706; font-weight: 700;">
+                                <span>Click for RPIC details</span>
+                                <i data-lucide="arrow-right" style="width: 14px; height: 14px;"></i>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- Unrecognized / Other Zone Notice Box (Only displayed if records exist) -->
+                    <div id="otherZoneAlertBox" style="display: none; margin-top: 14px; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 12px 16px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="alert-triangle" style="width: 16px; height: 16px; color: #64748b;"></i>
+                                <span style="font-size: 0.84rem; color: #334155;">
+                                    <strong>Other / Unassigned Zone Records:</strong> <span id="otherZoneCount">0</span> villages (<span id="otherZonePending">0</span> pending, <span id="otherZoneCompleted">0</span> completed)
+                                </span>
+                            </div>
+                            <button class="btn btn-secondary btn-xs" onclick="DashboardManager.viewZoneDetail('Other / Unassigned')" style="padding: 4px 10px; font-size: 0.76rem;">
+                                View Other Records &rarr;
+                            </button>
                         </div>
                     </div>
                 </div>
 
-                <!-- Zone-Wise Insights Section -->
-                <div class="card" style="margin-bottom: 0;">
-                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
-                        <h3 class="card-title" style="margin: 0; display: flex; align-items: center; gap: 8px;">
-                            <i data-lucide="layers" style="color: #2563eb;"></i>
-                            <span>Zone-Wise Insights & Progress</span>
-                        </h3>
+                <!-- ================= COMPLETED VILLAGES & REVIEW LINKS SECTION ================= -->
+                <div class="card" id="dashboardCompletedVillagesCard" style="margin-top: 22px;">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 14px; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <h3 class="card-title" style="margin: 0; display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="check-circle-2" style="color: #059669;"></i>
+                                <span>Completed Villages &amp; Review Links</span>
+                            </h3>
+                            <p style="margin: 2px 0 0 0; font-size: 0.8rem; color: var(--text-secondary, #64748b);">
+                                Real-time list of verified completed villages with genuine review links to inspect saved Dug Well and Tube Well markings.
+                            </p>
+                        </div>
                         <div style="display: flex; align-items: center; gap: 8px;">
-                            <span class="badge" style="background: rgba(37, 99, 235, 0.1); color: #2563eb; border: 1px solid rgba(37, 99, 235, 0.25); font-size: 0.78rem;" id="zoneCountBadge">0 Zones</span>
+                            <span class="badge" id="dashboardCompletedCountBadge" style="background: rgba(5, 150, 105, 0.1); color: #059669; font-weight: 700; font-size: 0.82rem; padding: 4px 10px;">
+                                0 Completed
+                            </span>
+                            <button class="btn btn-secondary btn-sm" onclick="DashboardManager.loadCompletedVillages()" title="Refresh completed villages" style="display: inline-flex; align-items: center; gap: 4px;">
+                                <i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i>
+                                <span>Refresh</span>
+                            </button>
                         </div>
                     </div>
 
-                    <!-- 4 Zone Overview KPI Cards -->
-                    <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 0;">
-                        <div class="stat-card" style="padding: 14px 16px; border-left: 4px solid #3b82f6;">
-                            <div>
-                                <div class="stat-label">Total Zones</div>
-                                <div class="stat-value" id="zoneKpiTotalZones" style="font-size: 1.45rem;">0</div>
-                                <div class="stat-sub">Configured operational zones</div>
-                            </div>
-                            <div class="stat-icon bg-blue-light" style="width: 38px; height: 38px;"><i data-lucide="layers" style="width: 18px; height: 18px;"></i></div>
-                        </div>
-                        <div class="stat-card" style="padding: 14px 16px; border-left: 4px solid #10b981;">
-                            <div>
-                                <div class="stat-label">Completed Zones</div>
-                                <div class="stat-value" id="zoneKpiCompletedZones" style="font-size: 1.45rem; color: #059669;">0</div>
-                                <div class="stat-sub">100% surveys finished</div>
-                            </div>
-                            <div class="stat-icon bg-emerald-light" style="width: 38px; height: 38px;"><i data-lucide="check-circle-2" style="width: 18px; height: 18px;"></i></div>
-                        </div>
-                        <div class="stat-card" style="padding: 14px 16px; border-left: 4px solid #f59e0b;">
-                            <div>
-                                <div class="stat-label">In-Progress Zones</div>
-                                <div class="stat-value" id="zoneKpiInProgressZones" style="font-size: 1.45rem; color: #d97706;">0</div>
-                                <div class="stat-sub">Active surveying</div>
-                            </div>
-                            <div class="stat-icon bg-amber-light" style="width: 38px; height: 38px;"><i data-lucide="activity" style="width: 18px; height: 18px;"></i></div>
-                        </div>
-                        <div class="stat-card" style="padding: 14px 16px; border-left: 4px solid #64748b;">
-                            <div>
-                                <div class="stat-label">Pending Zones</div>
-                                <div class="stat-value" id="zoneKpiPendingZones" style="font-size: 1.45rem; color: #475569;">0</div>
-                                <div class="stat-sub">0% survey completion</div>
-                            </div>
-                            <div class="stat-icon" style="width: 38px; height: 38px; background: rgba(100, 116, 139, 0.12); color: #64748b;"><i data-lucide="clock" style="width: 18px; height: 18px;"></i></div>
-                        </div>
+                    <!-- Completed Villages Table -->
+                    <div class="table-responsive">
+                        <table class="data-table" id="dashboardCompletedVillagesTable">
+                            <thead>
+                                <tr>
+                                    <th style="width: 45px;">#</th>
+                                    <th>Village Name</th>
+                                    <th>Village Code</th>
+                                    <th>Assigned Person</th>
+                                    <th>Completion Date</th>
+                                    <th>Saved Markings</th>
+                                    <th>Status</th>
+                                    <th style="text-align: right; min-width: 190px;">Action / Review</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dashboardCompletedVillagesTableBody">
+                                <tr>
+                                    <td colspan="8" style="text-align: center; padding: 28px; color: #94a3b8;">
+                                        Loading completed villages...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </section>
+
 
             <!-- ================= VIEW 2: IMPORT VILLAGES ================= -->
             <section id="view-import" class="app-view" style="display: none;">
@@ -443,10 +581,38 @@
                         </div>
 
                         <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                            <button class="btn btn-primary" onclick="App.navigate('villages')">View All Villages</button>
-                            <button class="btn btn-secondary" onclick="App.navigate('assign-person')"><i data-lucide="user-check"></i> Assign Villages to Person</button>
-                            <button class="btn btn-secondary" onclick="App.navigate('processing')">Start Processing Queue</button>
-                            <button class="btn btn-outline" onclick="ImportManager.reset()">Import Another File</button>
+                            <button class="btn btn-primary" onclick="App.navigate('assign-person')"><i data-lucide="user-check"></i> Assign Villages to Person</button>
+                            <button class="btn btn-secondary" onclick="App.navigate('export')"><i data-lucide="file-spreadsheet"></i> Export Excel</button>
+                            <button class="btn btn-secondary" onclick="App.navigate('dashboard')"><i data-lucide="layout-dashboard"></i> View Dashboard</button>
+                            <button class="btn btn-outline" onclick="ImportManager.reset()"><i data-lucide="plus-circle"></i> Import Another File</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ================= IMPORT BATCHES / DATASET HISTORY ================= -->
+                <div class="card" style="margin-top: 24px;">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                        <div>
+                            <h2 class="card-title" style="display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="layers" style="color: var(--primary);"></i>
+                                <span>Imported Datasets & Batch History</span>
+                            </h2>
+                            <p class="card-subtitle">Manage each uploaded Excel dataset separately. Review, update village details, upload corrected sheets, or safely delete specific batches.</p>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <button type="button" class="btn btn-outline btn-sm" onclick="ImportManager.loadBatches()" title="Refresh Batch List">
+                                <i data-lucide="refresh-cw"></i>
+                                <span>Refresh</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Batches Grid Container -->
+                    <div id="batchesContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 18px; margin-top: 14px;">
+                        <!-- Rendered dynamically by ImportManager.loadBatches() -->
+                        <div style="grid-column: 1 / -1; text-align: center; padding: 30px; color: var(--text-secondary);">
+                            <div class="spinner" style="margin: 0 auto 10px auto;"></div>
+                            <div>Loading imported batches...</div>
                         </div>
                     </div>
                 </div>
@@ -686,72 +852,149 @@
                 </div>
             </section>
 
-            <!-- ================= VIEW 3: ALL VILLAGES ================= -->
+            <!-- ================= VIEW 3: ALL VILLAGES & DRILLDOWN EXPLORER ================= -->
             <section id="view-villages" class="app-view" style="display: none;">
+                <!-- Header with Back Button and Contextual Title -->
+                <div class="card" style="margin-bottom: 16px; padding: 14px 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                        <div style="display: flex; align-items: center; gap: 14px;">
+                            <button class="btn btn-secondary btn-sm" onclick="App.navigate('dashboard')" style="display: inline-flex; align-items: center; gap: 6px; font-weight: 600;">
+                                <i data-lucide="arrow-left" style="width: 15px; height: 15px;"></i>
+                                <span>Back to Dashboard</span>
+                            </button>
+                            <div>
+                                <h2 style="font-size: 1.15rem; font-weight: 800; margin: 0; color: #0f172a; display: flex; align-items: center; gap: 8px;" id="villagesViewTitle">
+                                    <span>Village Records &amp; Intelligence</span>
+                                </h2>
+                                <p style="font-size: 0.8rem; color: #64748b; margin: 2px 0 0 0;" id="villagesViewSubtitle">
+                                    Complete database records with live search, filters, and assignment status.
+                                </p>
+                            </div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <button class="btn btn-secondary btn-sm" onclick="VillagesManager.load()" title="Reload village records" style="display: inline-flex; align-items: center; gap: 4px;">
+                                <i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i>
+                                <span>Refresh</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Contextual 4 KPI Cards for the Active Scope (Overall or Scoped Zone) -->
+                <div class="stats-grid" id="villagesContextualKpis" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 16px;">
+                    <div class="stat-card stat-card-clickable" id="kpiCardScopeTotal" onclick="VillagesManager.setStatusTab('all')" title="Click to filter by all villages in this scope">
+                        <div>
+                            <div class="stat-label" id="scopeKpiLabelTotal">Total Villages</div>
+                            <div class="stat-value" id="villagesStatTotal">0</div>
+                            <div class="stat-sub" style="font-size: 0.76rem; color: var(--primary); font-weight: 600; margin-top: 4px;">All records</div>
+                        </div>
+                        <div class="stat-icon bg-blue-light"><i data-lucide="map-pin"></i></div>
+                    </div>
+                    <div class="stat-card stat-card-clickable" id="kpiCardScopePending" onclick="VillagesManager.setStatusTab('pending')" title="Click to filter by pending villages">
+                        <div>
+                            <div class="stat-label" id="scopeKpiLabelPending">Pending Villages</div>
+                            <div class="stat-value" id="villagesStatPending" style="color: #d97706;">0</div>
+                            <div class="stat-sub" style="font-size: 0.76rem; color: #d97706; font-weight: 600; margin-top: 4px;">Work not done</div>
+                        </div>
+                        <div class="stat-icon bg-amber-light"><i data-lucide="clock"></i></div>
+                    </div>
+                    <div class="stat-card stat-card-clickable" id="kpiCardScopeAssigned" onclick="VillagesManager.setStatusTab('assigned')" title="Click to filter by assigned villages">
+                        <div>
+                            <div class="stat-label" id="scopeKpiLabelAssigned">Assigned Villages</div>
+                            <div class="stat-value" id="villagesStatAssigned" style="color: #4f46e5;">0</div>
+                            <div class="stat-sub" style="font-size: 0.76rem; color: #4f46e5; font-weight: 600; margin-top: 4px;">Allocated to surveyor</div>
+                        </div>
+                        <div class="stat-icon bg-indigo-light"><i data-lucide="user-check"></i></div>
+                    </div>
+                    <div class="stat-card stat-card-clickable" id="kpiCardScopeCompleted" onclick="VillagesManager.setStatusTab('completed')" title="Click to filter by completed villages">
+                        <div>
+                            <div class="stat-label" id="scopeKpiLabelCompleted">Completed Villages</div>
+                            <div class="stat-value" id="villagesStatCompleted" style="color: #059669;">0</div>
+                            <div class="stat-sub" style="font-size: 0.76rem; color: #059669; font-weight: 600; margin-top: 4px;">Verified &amp; saved</div>
+                        </div>
+                        <div class="stat-icon bg-emerald-light"><i data-lucide="check-circle-2"></i></div>
+                    </div>
+                </div>
+
+                <!-- Scope Progress Bar -->
+                <div class="card" style="margin-bottom: 16px; padding: 12px 18px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <span style="font-weight: 600; font-size: 0.85rem;" id="scopeProgressLabel">Marking Completion Rate</span>
+                        <span style="font-weight: 800; color: var(--primary); font-size: 1rem;" id="villagesStatProgress">0.0%</span>
+                    </div>
+                    <div style="width: 100%; height: 8px; background: #e2e8f0; border-radius: 9999px; overflow: hidden;">
+                        <div id="villagesProgressBar" style="height: 100%; width: 0%; background: linear-gradient(90deg, #2563eb, #10b981); border-radius: 9999px; transition: width 0.3s ease;"></div>
+                    </div>
+                </div>
+
                 <!-- Filters & Search Toolbar -->
                 <div class="card" style="padding: 16px; margin-bottom: 16px;">
-                    <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto; gap: 12px; align-items: center;">
-                        <input type="text" id="villageSearchInput" class="form-control" placeholder="Search by Village Name, Code, or District...">
+                    <div style="display: grid; grid-template-columns: 2fr 1.2fr 1.2fr 1.2fr 1.4fr 1.2fr auto; gap: 10px; align-items: center;" class="filter-toolbar-grid">
+                        <input type="text" id="villageSearchInput" class="form-control" placeholder="Search Village Name, Code, District...">
                         
+                        <select id="filterZone" class="form-control">
+                            <option value="">All Zones</option>
+                            <option value="GPIC">GPIC</option>
+                            <option value="KPIC">KPIC</option>
+                            <option value="VPIC">VPIC</option>
+                            <option value="RPIC">RPIC</option>
+                            <option value="Other / Unassigned">Other / Unassigned</option>
+                        </select>
+
                         <select id="filterDistrict" class="form-control">
                             <option value="">All Districts</option>
                         </select>
 
                         <select id="filterSubdistrict" class="form-control">
-                            <option value="">All Subdistricts</option>
+                            <option value="">All Talukas</option>
                         </select>
 
-                        <select id="filterZone" class="form-control">
-                            <option value="">All Zones</option>
+                        <select id="filterAssignedPerson" class="form-control">
+                            <option value="">All Surveyors</option>
+                            <option value="unassigned">Unassigned</option>
                         </select>
 
                         <select id="filterStatus" class="form-control">
                             <option value="">All Statuses</option>
-                            <option value="Pending">Pending</option>
-                            <option value="Ready to Process">Ready to Process</option>
+                            <option value="pending">Pending</option>
+                            <option value="assigned">Assigned</option>
+                            <option value="completed">Completed</option>
                             <option value="In Progress">In Progress</option>
-                            <option value="Marking Completed">Marking Completed</option>
-                            <option value="KML Downloaded">KML Downloaded</option>
-                            <option value="Done">Done</option>
-                            <option value="Verified">Verified</option>
-                            <option value="Needs Review">Needs Review</option>
-                            <option value="Failed">Failed</option>
+                            <option value="Ready to Process">Ready to Process</option>
                         </select>
 
-                        <button class="btn btn-secondary" id="resetFiltersBtn" title="Reset Filters">
+                        <button class="btn btn-secondary" id="resetFiltersBtn" title="Reset all filters" style="display: inline-flex; align-items: center; gap: 4px; padding: 8px 12px;">
                             <i data-lucide="rotate-ccw"></i>
                             <span>Reset</span>
                         </button>
                     </div>
-                </div>
 
-                <!-- Bulk Actions Bar (Appears when checkboxes are selected) -->
-                <div id="bulkActionBar" style="display: none; background: #1e293b; color: #ffffff; padding: 12px 20px; border-radius: var(--radius-sm); margin-bottom: 16px; align-items: center; justify-content: space-between;">
-                    <div style="display: flex; align-items: center; gap: 12px;">
-                        <span id="selectedCountBadge" style="background: var(--primary); padding: 4px 10px; border-radius: 9999px; font-weight: 600; font-size: 0.8rem;">0 Selected</span>
-                        <span style="font-size: 0.88rem;">Bulk Actions:</span>
-                        <select id="bulkStatusSelect" class="form-control" style="width: 180px; padding: 4px 8px; font-size: 0.82rem;">
-                            <option value="">Change Status to...</option>
-                            <option value="Ready to Process">Ready to Process</option>
-                            <option value="In Progress">In Progress</option>
-                            <option value="Marking Completed">Marking Completed</option>
-                            <option value="Verified">Verified</option>
-                            <option value="Done">Done (With KML)</option>
-                            <option value="Needs Review">Needs Review</option>
-                        </select>
-                        <button class="btn btn-primary btn-sm" id="applyBulkStatusBtn">Apply Status</button>
-                    </div>
-
-                    <div style="display: flex; gap: 8px;">
-                        <button class="btn btn-secondary btn-sm" id="exportSelectedBtn">
-                            <i data-lucide="download"></i>
-                            <span>Export Selected</span>
+                    <!-- Quick Status Filter Pills -->
+                    <div style="display: flex; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid #f1f5f9; flex-wrap: wrap; align-items: center;">
+                        <span style="font-size: 0.8rem; font-weight: 700; color: #64748b; margin-right: 4px;">Quick Status:</span>
+                        <button type="button" class="status-tab-btn active" id="pillStatusAll" onclick="VillagesManager.setStatusTab('all')">
+                            <span>All</span>
+                            <span class="tab-count-badge" id="pillCountAll">0</span>
                         </button>
-                        <button class="btn btn-secondary btn-sm" id="clearSelectionBtn">Clear Selection</button>
+                        <button type="button" class="status-tab-btn" id="pillStatusPending" onclick="VillagesManager.setStatusTab('pending')">
+                            <i data-lucide="clock" style="width: 13px; height: 13px; color: #d97706;"></i>
+                            <span>Pending</span>
+                            <span class="tab-count-badge" id="pillCountPending">0</span>
+                        </button>
+                        <button type="button" class="status-tab-btn" id="pillStatusAssigned" onclick="VillagesManager.setStatusTab('assigned')">
+                            <i data-lucide="user-check" style="width: 13px; height: 13px; color: #4f46e5;"></i>
+                            <span>Assigned</span>
+                            <span class="tab-count-badge" id="pillCountAssigned">0</span>
+                        </button>
+                        <button type="button" class="status-tab-btn" id="pillStatusCompleted" onclick="VillagesManager.setStatusTab('completed')">
+                            <i data-lucide="check-circle-2" style="width: 13px; height: 13px; color: #059669;"></i>
+                            <span>Completed</span>
+                            <span class="tab-count-badge" id="pillCountCompleted">0</span>
+                        </button>
                     </div>
                 </div>
 
-                <!-- Villages Main Table -->
+                <!-- Villages Main Table Card -->
                 <div class="card" style="padding: 0; overflow: hidden;">
                     <div class="table-responsive">
                         <table class="data-table" id="villagesMainTable">
@@ -759,26 +1002,20 @@
                                 <tr>
                                     <th style="width: 38px;"><input type="checkbox" id="selectAllCheckbox"></th>
                                     <th>Zone</th>
-                                    <th>District Name</th>
-                                    <th>Subdistrict Name</th>
+                                    <th>District</th>
+                                    <th>Taluka</th>
                                     <th>Village Name</th>
                                     <th>Village Code</th>
-                                    <th>GEB Conn</th>
-                                    <th>Orig Nos</th>
-                                    <th>Edited Nos</th>
-                                    <th>Total</th>
-                                    <th>Dugwells</th>
-                                    <th>Bores</th>
-                                    <th>KML File</th>
-                                    <th>Status</th>
-                                    <th>Remark</th>
+                                    <th>Assigned Person</th>
+                                    <th>GEB / Wells</th>
+                                    <th>Status &amp; Completion</th>
                                     <th style="text-align: right;">Actions</th>
                                 </tr>
                             </thead>
                             <tbody id="villagesTableBody">
                                 <tr>
-                                    <td colspan="16" style="text-align: center; padding: 36px; color: #94a3b8;">
-                                        Loading villages...
+                                    <td colspan="10" style="text-align: center; padding: 36px; color: #94a3b8;">
+                                        Loading villages from database...
                                     </td>
                                 </tr>
                             </tbody>
@@ -1188,68 +1425,6 @@
             <!-- ================= VIEW 8: SETTINGS ================= -->
             <section id="view-settings" class="app-view" style="display: none;">
                 <div style="display: grid; grid-template-columns: 1fr; gap: 24px; max-width: 800px;">
-                    <!-- Appearance & Theme Card -->
-                    <div class="card" id="appearanceCard">
-                        <div class="card-header">
-                            <h3 class="card-title"><i data-lucide="palette"></i> Appearance</h3>
-                            <span class="badge" id="currentThemeBadge" style="background: var(--primary-light); color: var(--primary); border: 1px solid var(--border-color); font-weight: 700;">Light Mode</span>
-                        </div>
-                        <div style="padding: 4px 0 8px 0;">
-                            <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 16px;">
-                                Customize the interface appearance for AUTO FINDING AI. Both modes work seamlessly across the sidebar, header, dashboard, cards, tables, forms, modals, buttons, and inputs, and persist automatically across logins and page refreshes.
-                            </p>
-                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px;">
-                                <!-- Light Mode Option -->
-                                <div class="theme-card" id="themeCardLight" onclick="ThemeManager.setTheme('light')">
-                                    <div class="theme-preview theme-preview-light">
-                                        <div class="preview-sidebar"></div>
-                                        <div class="preview-content">
-                                            <div class="preview-header"></div>
-                                            <div class="preview-body">
-                                                <div class="preview-card"></div>
-                                                <div class="preview-card"></div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="theme-info">
-                                        <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-                                            <div style="display: flex; align-items: center; gap: 8px;">
-                                                <i data-lucide="sun" style="width: 18px; height: 18px; color: #f59e0b;"></i>
-                                                <span style="font-weight: 700; font-size: 0.95rem; color: var(--text-primary);">Light Mode</span>
-                                            </div>
-                                            <input type="radio" name="appTheme" value="light" id="themeRadioLight" style="accent-color: var(--primary); cursor: pointer;" checked>
-                                        </div>
-                                        <span style="font-size: 0.78rem; color: var(--text-muted); margin-top: 4px;">Crisp, clean light view for daytime use</span>
-                                    </div>
-                                </div>
-
-                                <!-- Dark Mode Option -->
-                                <div class="theme-card" id="themeCardDark" onclick="ThemeManager.setTheme('dark')">
-                                    <div class="theme-preview theme-preview-dark">
-                                        <div class="preview-sidebar"></div>
-                                        <div class="preview-content">
-                                            <div class="preview-header"></div>
-                                            <div class="preview-body">
-                                                <div class="preview-card"></div>
-                                                <div class="preview-card"></div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="theme-info">
-                                        <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-                                            <div style="display: flex; align-items: center; gap: 8px;">
-                                                <i data-lucide="moon" style="width: 18px; height: 18px; color: #60a5fa;"></i>
-                                                <span style="font-weight: 700; font-size: 0.95rem; color: var(--text-primary);">Dark Mode</span>
-                                            </div>
-                                            <input type="radio" name="appTheme" value="dark" id="themeRadioDark" style="accent-color: var(--primary); cursor: pointer;">
-                                        </div>
-                                        <span style="font-size: 0.78rem; color: var(--text-muted); margin-top: 4px;">High-contrast dark view optimized for eye comfort</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
                     <!-- Database Health & Diagnostics (Hidden from user display as required) -->
                     <div class="card" id="sqlDiagCard" style="display: none;">
                         <div class="card-header">
@@ -1312,11 +1487,30 @@
                         <form id="changePasswordForm">
                             <div style="margin-bottom: 12px;">
                                 <label class="meta-item-label" for="currPassword">Current Password</label>
-                                <input type="password" id="currPassword" class="form-control" required>
+                                <div class="password-input-wrapper">
+                                    <input type="password" id="currPassword" class="form-control" required placeholder="Enter current password" autocomplete="current-password">
+                                    <button type="button" class="password-toggle-btn" onclick="PasswordVisibility.toggle('currPassword', this)" title="Show password" aria-label="Show password">
+                                        <i data-lucide="eye-off"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div style="margin-bottom: 12px;">
+                                <label class="meta-item-label" for="newPassword">New Password (min 6 characters)</label>
+                                <div class="password-input-wrapper">
+                                    <input type="password" id="newPassword" class="form-control" required minlength="6" placeholder="Enter new password" autocomplete="new-password">
+                                    <button type="button" class="password-toggle-btn" onclick="PasswordVisibility.toggle('newPassword', this)" title="Show password" aria-label="Show password">
+                                        <i data-lucide="eye-off"></i>
+                                    </button>
+                                </div>
                             </div>
                             <div style="margin-bottom: 16px;">
-                                <label class="meta-item-label" for="newPassword">New Password (min 6 characters)</label>
-                                <input type="password" id="newPassword" class="form-control" required minlength="6">
+                                <label class="meta-item-label" for="confirmNewPassword">Confirm New Password</label>
+                                <div class="password-input-wrapper">
+                                    <input type="password" id="confirmNewPassword" class="form-control" required minlength="6" placeholder="Re-enter new password" autocomplete="new-password">
+                                    <button type="button" class="password-toggle-btn" onclick="PasswordVisibility.toggle('confirmNewPassword', this)" title="Show password" aria-label="Show password">
+                                        <i data-lucide="eye-off"></i>
+                                    </button>
+                                </div>
                             </div>
                             <button type="submit" class="btn btn-secondary">
                                 <i data-lucide="key"></i>
@@ -1629,6 +1823,26 @@
                     </div>
                 </div>
 
+                <!-- User History Section -->
+                <div class="card" style="margin-bottom: 24px;">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <h3 class="card-title" style="margin: 0; display: flex; align-items: center; gap: 8px;">
+                            <i data-lucide="history" style="color: #2563eb;"></i> History
+                        </h3>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span id="userDashboardHistoryBadge" class="badge" style="background: #eff6ff; color: #2563eb; font-weight: 600;">0 completed</span>
+                            <button class="btn btn-secondary btn-sm" onclick="App.navigate('user-history')" style="font-size: 0.78rem; padding: 4px 10px;">
+                                View All &rarr;
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body" style="padding: 16px 20px;">
+                        <div id="userDashboardHistoryList" style="display: flex; flex-direction: column; gap: 8px;">
+                            <div style="color: #94a3b8; font-size: 0.9rem; padding: 8px 0;">No completed villages yet.</div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Quick Help Card -->
                 <div class="card">
                     <div class="card-header">
@@ -1703,6 +1917,34 @@
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= VIEW 13: USER HISTORY (SURVEYOR) ================= -->
+            <section id="view-user-history" class="app-view" style="display: none;">
+                <div class="card">
+                    <div class="card-header" style="justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                        <div>
+                            <h2 style="font-size: 1.25rem; font-weight: 700; color: #0f172a; display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="history" style="color: #2563eb;"></i> History
+                            </h2>
+                            <p style="font-size: 0.85rem; color: #64748b; margin-top: 4px;">
+                                Completed villages with date of completion.
+                            </p>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="UserWorkManager.loadHistory()">
+                            <i data-lucide="refresh-cw"></i>
+                            <span>Refresh</span>
+                        </button>
+                    </div>
+
+                    <div class="card-body" style="padding: 20px;">
+                        <div id="userFullHistoryList" style="display: flex; flex-direction: column; gap: 8px;">
+                            <div style="color: #94a3b8; font-size: 0.9rem; text-align: center; padding: 24px;">
+                                Loading history...
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -1910,7 +2152,12 @@
                 </div>
                 <div style="margin-bottom: 14px;">
                     <label class="meta-item-label" for="formUserPassword">Password <span id="pwRequiredMarker">*</span></label>
-                    <input type="password" id="formUserPassword" class="form-control" placeholder="Enter secure password">
+                    <div class="password-input-wrapper">
+                        <input type="password" id="formUserPassword" class="form-control" placeholder="Enter secure password" autocomplete="new-password">
+                        <button type="button" class="password-toggle-btn" onclick="PasswordVisibility.toggle('formUserPassword', this)" title="Show password" aria-label="Show password">
+                            <i data-lucide="eye-off"></i>
+                        </button>
+                    </div>
                     <small id="pwHelpText" style="color: #64748b; font-size: 0.75rem; display: block; margin-top: 4px;">Minimum 4 characters.</small>
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px;">
@@ -1936,6 +2183,8 @@
             </div>
         </form>
     </div>
+</div>
+
 <!-- Surveyor Complete / Save Village Modal -->
 <div class="modal-backdrop" id="surveyorCompleteModal" style="display: none;">
     <div class="modal-content" style="max-width: 480px;">
@@ -1957,6 +2206,14 @@
                     <div style="font-size: 0.82rem; color: var(--text-secondary, #64748b); margin-top: 2px;">
                         Code: <code id="surveyorVillageCode" style="font-weight: 600;">-</code> | Location: <span id="surveyorVillageLocation">-</span>
                     </div>
+                </div>
+
+                <div id="surveyorCorrectionNotice" style="display: none; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; color: #9f1239; font-size: 0.84rem;">
+                    <div style="font-weight: 700; display: flex; align-items: center; gap: 6px;">
+                        <i data-lucide="alert-circle" style="width: 14px; height: 14px; color: #e11d48;"></i>
+                        <span>Correction Required</span>
+                    </div>
+                    <div id="surveyorCorrectionReasonText" style="margin-top: 4px; color: #be123c; font-size: 0.82rem; line-height: 1.4;"></div>
                 </div>
 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
@@ -2009,11 +2266,431 @@
     </div>
 </div>
 
+<!-- ================= IMPORT BATCH MODALS ================= -->
+
+<!-- Delete Import Batch Modal -->
+<div class="modal-backdrop" id="deleteBatchModal" style="display: none;">
+    <div class="modal-content" style="max-width: 520px;">
+        <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+            <h3 class="card-title" style="color: #b91c1c; display: flex; align-items: center; gap: 8px;">
+                <i data-lucide="trash-2" style="width: 20px; height: 20px;"></i>
+                <span>Delete Imported Dataset</span>
+            </h3>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="App.closeModal('deleteBatchModal')">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+        <div class="modal-body" style="padding: 18px 0;">
+            <input type="hidden" id="deleteBatchId">
+            <h4 id="deleteBatchHeading" style="font-size: 1.05rem; font-weight: 700; color: #0f172a; margin-bottom: 8px; line-height: 1.4;">
+                Are you sure you want to delete this imported dataset containing <span id="deleteBatchCount" style="color: #b91c1c;">0</span> villages?
+            </h4>
+            <p id="deleteBatchFileText" style="font-size: 0.84rem; color: var(--text-secondary); margin-bottom: 14px;"></p>
+
+            <div id="deleteBatchWarningBanner" style="display: none; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; color: #9f1239;">
+                <div style="font-weight: 700; font-size: 0.88rem; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+                    <i data-lucide="alert-triangle" style="width: 16px; height: 16px;"></i>
+                    <span>Warning: Active Surveyor Work Detected</span>
+                </div>
+                <p style="font-size: 0.82rem; margin: 0 0 10px 0; color: #881337;" id="deleteBatchWarningDetails"></p>
+                <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; font-size: 0.82rem; font-weight: 600; color: #9f1239;">
+                    <input type="checkbox" id="deleteBatchConfirmCheckbox" onchange="ImportManager.toggleDeleteConfirm()" style="margin-top: 3px;">
+                    <span>I understand and confirm that assigned and completed survey work in this batch will be permanently removed.</span>
+                </label>
+            </div>
+
+            <div style="background: var(--bg-surface); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.78rem; color: var(--text-secondary);">
+                <i data-lucide="shield-check" style="width: 14px; height: 14px; vertical-align: middle; color: #10b981; margin-right: 4px;"></i>
+                Safe Data Protection: An automated database snapshot backup will be created in the <code>backups/</code> folder prior to deletion.
+            </div>
+        </div>
+        <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid var(--border-color); padding-top: 14px;">
+            <button type="button" class="btn btn-secondary" onclick="App.closeModal('deleteBatchModal')">Cancel</button>
+            <button type="button" class="btn btn-danger" id="btnConfirmDeleteBatch" onclick="ImportManager.executeDeleteBatch()" style="display: flex; align-items: center; gap: 6px;">
+                <i data-lucide="trash-2" style="width: 15px; height: 15px;"></i>
+                <span id="btnConfirmDeleteBatchText">Delete Dataset</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Edit / Review Import Batch Modal -->
+<div class="modal-backdrop" id="editBatchModal" style="display: none;">
+    <div class="modal-content modal-lg" style="max-width: 1100px; max-height: 90vh; display: flex; flex-direction: column;">
+        <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px; flex-shrink: 0;">
+            <div>
+                <h3 class="card-title" style="display: flex; align-items: center; gap: 8px; font-size: 1.1rem;">
+                    <i data-lucide="file-spreadsheet" style="color: var(--primary);"></i>
+                    <span>Batch Management & Review: </span>
+                    <strong id="editBatchTitleFileName" style="color: var(--primary);">file.xlsx</strong>
+                </h3>
+                <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;" id="editBatchMetaSubtitle"></div>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="App.closeModal('editBatchModal')">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div style="display: flex; gap: 8px; border-bottom: 1px solid var(--border-color); padding: 10px 0; margin-bottom: 12px; flex-shrink: 0;">
+            <button type="button" class="btn btn-sm btn-primary" id="tabBtnReviewVillages" onclick="ImportManager.switchEditTab('review')">
+                <i data-lucide="list"></i>
+                <span>Review & Edit Villages</span>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline" id="tabBtnUploadCorrection" onclick="ImportManager.switchEditTab('upload')">
+                <i data-lucide="upload-cloud"></i>
+                <span>Upload Corrected Excel File</span>
+            </button>
+        </div>
+
+        <!-- Tab 1: Review & Edit Villages Table -->
+        <div id="tabContentReview" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column;">
+            <!-- Filters Toolbar -->
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; flex-shrink: 0;">
+                <div style="position: relative; flex: 1; min-width: 220px;">
+                    <i data-lucide="search" style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--text-secondary);"></i>
+                    <input type="text" id="batchVillageSearchInput" class="form-control" placeholder="Search by Village Name, Code, Taluka..." style="padding-left: 32px; font-size: 0.84rem;">
+                </div>
+                <input type="text" id="batchDistrictFilter" class="form-control" placeholder="Filter District..." style="width: 160px; font-size: 0.84rem;">
+                <input type="text" id="batchTalukaFilter" class="form-control" placeholder="Filter Taluka..." style="width: 160px; font-size: 0.84rem;">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="ImportManager.resetBatchFilters()" title="Reset Filters">
+                    <i data-lucide="rotate-ccw"></i>
+                    <span>Reset</span>
+                </button>
+            </div>
+
+            <!-- Table Count Summary -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.8rem; color: var(--text-secondary); flex-shrink: 0;">
+                <div id="batchVillagesCountSummary">Loading records...</div>
+            </div>
+
+            <!-- Paginated Village Table -->
+            <div class="table-responsive" style="flex: 1; min-height: 250px; border: 1px solid var(--border-color); border-radius: 6px;">
+                <table class="data-table" style="font-size: 0.82rem;">
+                    <thead>
+                        <tr>
+                            <th style="width: 90px;">Village Code</th>
+                            <th>Village Name</th>
+                            <th>District</th>
+                            <th>Taluka</th>
+                            <th>Zone</th>
+                            <th>GEB Conn.</th>
+                            <th style="text-align: center;">Kuva / Bor / Solar</th>
+                            <th style="text-align: center;">Total Wells</th>
+                            <th style="text-align: center;">Status</th>
+                            <th style="text-align: center; width: 80px;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="batchVillagesTableBody">
+                        <tr><td colspan="10" style="text-align: center; padding: 24px; color: var(--text-secondary);">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination Bar -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; flex-shrink: 0;">
+                <span id="batchPaginationInfo" style="font-size: 0.82rem; color: var(--text-secondary);">Page 1 of 1</span>
+                <div style="display: flex; gap: 8px;">
+                    <button type="button" class="btn btn-outline btn-sm" id="btnBatchPrevPage" onclick="ImportManager.changeBatchPage(-1)">
+                        <i data-lucide="chevron-left"></i> Previous
+                    </button>
+                    <button type="button" class="btn btn-outline btn-sm" id="btnBatchNextPage" onclick="ImportManager.changeBatchPage(1)">
+                        Next <i data-lucide="chevron-right"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 2: Upload Corrected Excel File -->
+        <div id="tabContentUpload" style="display: none; padding: 10px 0;">
+            <div style="background: rgba(37, 99, 235, 0.05); border: 1px solid rgba(37, 99, 235, 0.2); border-radius: 8px; padding: 14px; margin-bottom: 18px;">
+                <h4 style="font-size: 0.92rem; font-weight: 700; color: var(--primary); margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+                    <i data-lucide="info" style="width: 16px; height: 16px;"></i>
+                    <span>How Batch Correction Works</span>
+                </h4>
+                <ul style="font-size: 0.82rem; color: var(--text-secondary); margin: 0; padding-left: 20px; line-height: 1.5;">
+                    <li>Upload your updated Excel or CSV file containing corrected village information.</li>
+                    <li><strong>Village Code</strong> is used as the primary matching key to locate existing records.</li>
+                    <li>Existing villages will have their details (names, taluka, wells, GEB info) updated <strong>without creating duplicate records</strong>.</li>
+                    <li>Surveyor assignments and completion statuses are strictly preserved.</li>
+                    <li>Any new village codes present in the file will be added as new records for this batch.</li>
+                </ul>
+            </div>
+
+            <div class="dropzone-box" id="batchCorrectDropzone" style="margin-bottom: 16px;">
+                <i data-lucide="file-up" style="width: 40px; height: 40px; color: var(--primary); margin-bottom: 10px;"></i>
+                <h4 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 4px;">Select or Drag & Drop Corrected Excel / CSV File</h4>
+                <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 14px;">Supports .xlsx, .xls, and .csv files</p>
+                <input type="file" id="batchCorrectFileInput" accept=".xlsx,.xls,.csv" style="display: none;" onchange="ImportManager.handleCorrectionFileSelected(this.files[0])">
+                <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('batchCorrectFileInput').click()">
+                    <i data-lucide="folder-open"></i>
+                    <span>Browse File</span>
+                </button>
+            </div>
+
+            <div id="batchCorrectFileInfo" style="display: none; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px 14px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <strong id="batchCorrectSelectedName" style="color: var(--text-primary); font-size: 0.9rem;"></strong>
+                    <div style="font-size: 0.78rem; color: var(--text-secondary);">Ready to upload & match by Village Code</div>
+                </div>
+                <button type="button" class="btn btn-primary" id="btnSubmitBatchCorrection" onclick="ImportManager.submitBatchCorrection()">
+                    <i data-lucide="check"></i>
+                    <span>Apply Corrections & Update</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="modal-footer" style="display: flex; justify-content: flex-end; border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 12px; flex-shrink: 0;">
+            <button type="button" class="btn btn-secondary" onclick="App.closeModal('editBatchModal')">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Edit Individual Village Modal -->
+<div class="modal-backdrop" id="quickEditVillageModal" style="display: none;">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">
+            <h3 class="card-title" style="display: flex; align-items: center; gap: 8px; font-size: 1.05rem;">
+                <i data-lucide="edit-3" style="color: var(--primary);"></i>
+                <span>Quick Edit Village: </span>
+                <code id="quickEditVillageCode" style="color: var(--primary); font-weight: 700;"></code>
+            </h3>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="App.closeModal('quickEditVillageModal')">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+        <form id="quickEditVillageForm" onsubmit="ImportManager.saveQuickEditVillage(event)">
+            <input type="hidden" id="quickEditVillageId">
+            <div class="modal-body" style="padding: 16px 0;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                    <div>
+                        <label class="meta-item-label" for="quickEditVillageName">Village Name *</label>
+                        <input type="text" id="quickEditVillageName" class="form-control" required>
+                    </div>
+                    <div>
+                        <label class="meta-item-label" for="quickEditDistrictName">District Name *</label>
+                        <input type="text" id="quickEditDistrictName" class="form-control" required>
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                    <div>
+                        <label class="meta-item-label" for="quickEditSubdistrictName">Taluka / Subdistrict *</label>
+                        <input type="text" id="quickEditSubdistrictName" class="form-control" required>
+                    </div>
+                    <div>
+                        <label class="meta-item-label" for="quickEditZone">Zone</label>
+                        <input type="text" id="quickEditZone" class="form-control" placeholder="e.g. ZONE_A">
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 12px;">
+                    <label class="meta-item-label" for="quickEditGeb">GEB Connection</label>
+                    <input type="text" id="quickEditGeb" class="form-control" placeholder="e.g. LT / HT connection details">
+                </div>
+
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px;">
+                    <div>
+                        <label class="meta-item-label" for="quickEditElectricKuva">Electric Kuva</label>
+                        <input type="number" id="quickEditElectricKuva" class="form-control" min="0" value="0" oninput="ImportManager.calcQuickEditWells()">
+                    </div>
+                    <div>
+                        <label class="meta-item-label" for="quickEditElectricBor">Electric Bor</label>
+                        <input type="number" id="quickEditElectricBor" class="form-control" min="0" value="0" oninput="ImportManager.calcQuickEditWells()">
+                    </div>
+                    <div>
+                        <label class="meta-item-label" for="quickEditSolarBorKuva">Solar Bor Kuva</label>
+                        <input type="number" id="quickEditSolarBorKuva" class="form-control" min="0" value="0" oninput="ImportManager.calcQuickEditWells()">
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                    <div>
+                        <label class="meta-item-label" for="quickEditTotalWells">Total Wells</label>
+                        <input type="number" id="quickEditTotalWells" class="form-control" min="0" value="0" readonly style="background: var(--bg-surface); font-weight: 700;">
+                    </div>
+                    <div>
+                        <label class="meta-item-label" for="quickEditRemark">Remark / Notes</label>
+                        <input type="text" id="quickEditRemark" class="form-control" placeholder="Optional notes">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid var(--border-color); padding-top: 12px;">
+                <button type="button" class="btn btn-secondary" onclick="App.closeModal('quickEditVillageModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="btnSaveQuickEditVillage">
+                    <i data-lucide="check"></i>
+                    <span>Save Changes</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ================= MODAL: REOPEN VILLAGE FOR CORRECTION ================= -->
+<div id="reopenVillageModal" class="modal-backdrop" style="display: none;">
+    <div class="modal" style="max-width: 520px; width: 100%;">
+        <div class="modal-header">
+            <h3 class="modal-title" style="display: flex; align-items: center; gap: 8px; color: #b45309;">
+                <i data-lucide="rotate-ccw" style="width: 20px; height: 20px; color: #d97706;"></i>
+                <span>Reopen Village for Correction</span>
+            </h3>
+            <button class="modal-close" onclick="App.closeModal('reopenVillageModal')">&times;</button>
+        </div>
+        <form id="reopenVillageForm" onsubmit="VillagesManager.executeReopenVillage(event)">
+            <input type="hidden" id="reopenVillageId">
+            <div class="modal-body" style="padding: 20px 24px;">
+                <!-- Village Details Summary Card -->
+                <div style="background: #fffbeb; border: 1px solid #fef3c7; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;">
+                    <div style="font-size: 0.92rem; font-weight: 700; color: #92400e;" id="reopenVillageDisplayName">Village Name</div>
+                    <div style="font-size: 0.78rem; color: #b45309; margin-top: 4px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                        <span>Code: <strong id="reopenVillageDisplayCode" style="color: #78350f;">-</strong></span>
+                        <span>Current Assignee: <strong id="reopenVillageDisplayPerson" style="color: #78350f;">-</strong></span>
+                    </div>
+                </div>
+
+                <!-- Correction Reason -->
+                <div style="margin-bottom: 16px;">
+                    <label class="meta-item-label" for="reopenCorrectionReason" style="font-weight: 600; color: #1e293b; display: block; margin-bottom: 6px;">
+                        Correction Reason <span style="color: #dc2626;">*</span>
+                    </label>
+                    <textarea id="reopenCorrectionReason" class="form-control" rows="3" required placeholder="e.g. Incorrect well marking. Need to recount dugwells and tubewells..."></textarea>
+                    <small style="color: #64748b; font-size: 0.75rem; display: block; margin-top: 4px;">
+                        Specify what needs correction. Saved in audit history and displayed to the field surveyor.
+                    </small>
+                </div>
+
+                <!-- Reassign Target Person -->
+                <div style="margin-bottom: 16px;">
+                    <label class="meta-item-label" for="reopenTargetPersonSelect" style="font-weight: 600; color: #1e293b; display: block; margin-bottom: 6px;">
+                        Reassign To (Field Surveyor)
+                    </label>
+                    <select id="reopenTargetPersonSelect" class="form-control">
+                        <option value="">-- Choose Field Surveyor --</option>
+                    </select>
+                    <small style="color: #64748b; font-size: 0.75rem; display: block; margin-top: 4px;">
+                        Select a surveyor to reassign this village, or leave as current assignee.
+                    </small>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 14px 24px; border-top: 1px solid #e2e8f0; background: #f8fafc;">
+                <button type="button" class="btn btn-secondary" onclick="App.closeModal('reopenVillageModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="reopenSubmitBtn" style="background: #d97706; border-color: #d97706; color: #ffffff;">
+                    <i data-lucide="rotate-ccw"></i>
+                    <span>Confirm Reopen &amp; Reassign</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ================= MODAL: REASSIGN VILLAGE ================= -->
+<div id="reassignVillageModal" class="modal-backdrop" style="display: none;">
+    <div class="modal" style="max-width: 520px; width: 100%;">
+        <div class="modal-header">
+            <h3 class="modal-title" style="display: flex; align-items: center; gap: 8px; color: #4338ca;">
+                <i data-lucide="user-plus" style="width: 20px; height: 20px; color: #4f46e5;"></i>
+                <span>Reassign Village to Surveyor</span>
+            </h3>
+            <button class="modal-close" onclick="App.closeModal('reassignVillageModal')">&times;</button>
+        </div>
+        <form id="reassignVillageForm" onsubmit="VillagesManager.executeReassignVillage(event)">
+            <input type="hidden" id="reassignVillageId">
+            <div class="modal-body" style="padding: 20px 24px;">
+                <!-- Village Details Summary Card -->
+                <div style="background: #eef2ff; border: 1px solid #e0e7ff; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;">
+                    <div style="font-size: 0.95rem; font-weight: 700; color: #3730a3;" id="reassignVillageDisplayName">Village Name</div>
+                    <div style="font-size: 0.78rem; color: #4338ca; margin-top: 4px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                        <span>Code: <strong id="reassignVillageDisplayCode" style="color: #1e1b4b;">-</strong></span>
+                        <span>Current Assignee: <strong id="reassignVillageDisplayPerson" style="color: #1e1b4b;">-</strong></span>
+                    </div>
+                </div>
+
+                <!-- Reassign Target Person -->
+                <div style="margin-bottom: 16px;">
+                    <label class="meta-item-label" for="reassignTargetPersonSelect" style="font-weight: 600; color: #1e293b; display: block; margin-bottom: 6px;">
+                        Select New Field Surveyor <span style="color: #dc2626;">*</span>
+                    </label>
+                    <select id="reassignTargetPersonSelect" class="form-control" required>
+                        <option value="">-- Choose Field Surveyor --</option>
+                    </select>
+                    <small style="color: #64748b; font-size: 0.75rem; display: block; margin-top: 4px;">
+                        Allocates active work access to the selected surveyor and removes it from previous surveyor.
+                    </small>
+                </div>
+
+                <!-- Reassignment Note / Reason -->
+                <div style="margin-bottom: 16px;">
+                    <label class="meta-item-label" for="reassignNote" style="font-weight: 600; color: #1e293b; display: block; margin-bottom: 6px;">
+                        Reassignment Note / Reason (Optional)
+                    </label>
+                    <input type="text" id="reassignNote" class="form-control" placeholder="e.g. Work reassigned for expedited survey completion">
+                </div>
+
+                <!-- Confirmation Notice Box -->
+                <div style="background: #fffbeb; border: 1px solid #fef3c7; border-radius: 6px; padding: 10px 12px; font-size: 0.8rem; color: #92400e; display: flex; align-items: flex-start; gap: 8px;">
+                    <i data-lucide="alert-circle" style="width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; color: #d97706;"></i>
+                    <span>Confirming will immediately remove this village from the previous surveyor's active Excel Files and make it available in the new surveyor's active list with its genuine review link preserved.</span>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 14px 24px; border-top: 1px solid #e2e8f0; background: #f8fafc;">
+                <button type="button" class="btn btn-secondary" onclick="App.closeModal('reassignVillageModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="reassignSubmitBtn" style="background: #4f46e5; border-color: #4f46e5; color: #ffffff;">
+                    <i data-lucide="user-check"></i>
+                    <span>Confirm Reassignment</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ================= MODAL: VILLAGE ASSIGNMENT & CORRECTION HISTORY ================= -->
+<div id="assignmentHistoryModal" class="modal-backdrop" style="display: none;">
+    <div class="modal" style="max-width: 680px; width: 100%; max-height: 85vh; display: flex; flex-direction: column;">
+        <div class="modal-header" style="flex-shrink: 0;">
+            <h3 class="modal-title" style="display: flex; align-items: center; gap: 8px; color: #0f172a;">
+                <i data-lucide="history" style="width: 20px; height: 20px; color: #2563eb;"></i>
+                <span>Village Assignment &amp; Audit History</span>
+            </h3>
+            <button class="modal-close" onclick="App.closeModal('assignmentHistoryModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 20px 24px; overflow-y: auto; flex: 1;">
+            <!-- Header village info -->
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 18px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <h4 style="font-size: 1.1rem; font-weight: 700; color: #0f172a; margin: 0;" id="historyModalVillageName">Village Name</h4>
+                        <div style="font-size: 0.8rem; color: #64748b; margin-top: 4px;">
+                            Code: <strong id="historyModalVillageCode" style="color: #0f172a;">-</strong> &bull; Location: <span id="historyModalVillageLocation">-</span>
+                        </div>
+                    </div>
+                    <div id="historyModalStatusBadges" style="display: flex; gap: 6px; align-items: center;"></div>
+                </div>
+                <div id="historyModalReviewLinkBox" style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed #cbd5e1; display: none;">
+                    <span style="font-size: 0.78rem; color: #475569; font-weight: 600;">Authentic Review Link: </span>
+                    <a id="historyModalReviewLink" href="#" target="_blank" rel="noopener noreferrer" style="font-size: 0.78rem; color: #2563eb; text-decoration: underline; word-break: break-all;"></a>
+                </div>
+            </div>
+
+            <!-- Timeline list -->
+            <div id="historyModalTimelineContainer">
+                <div style="text-align: center; color: #94a3b8; padding: 24px;">Loading assignment history...</div>
+            </div>
+        </div>
+        <div class="modal-footer" style="display: flex; justify-content: flex-end; padding: 12px 24px; border-top: 1px solid #e2e8f0; background: #f8fafc; flex-shrink: 0;">
+            <button type="button" class="btn btn-secondary" onclick="App.closeModal('assignmentHistoryModal')">Close</button>
+        </div>
+    </div>
+</div>
+
+
 <!-- Toast Notifications Container -->
 <div class="toast-container" id="toastContainer"></div>
 
+<!-- Password Visibility Universal Helper -->
+<script src="/static/js/password-toggle.js?v=2.1"></script>
+
 <!-- JavaScript Core Application -->
-<script src="/static/js/app.js"></script>
+<script src="/static/js/app.js?v=3.0"></script>
 
 </body>
 </html>

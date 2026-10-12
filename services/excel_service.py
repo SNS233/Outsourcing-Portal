@@ -1,6 +1,9 @@
 import io
 import re
 import os
+import time
+import math
+import logging
 import json
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -10,6 +13,9 @@ from pathlib import Path
 from werkzeug.utils import secure_filename
 import db
 from config import Config
+from services.sync_service import bump_state_version
+
+logger = logging.getLogger(__name__)
 
 # Standard mapping dictionary from common header names to our database field names
 COLUMN_MAPPING_RULES = {
@@ -452,11 +458,11 @@ def parse_and_import_file(file_storage_or_path, column_mappings, duplicate_mode=
         error_report_path = Config.ERROR_REPORT_DIR / error_report_filename
         error_df.to_excel(error_report_path, index=False)
 
-    # 1. Create ImportBatch record in SQL Server
+    # 1. Create ImportBatch record in SQL Server / SQLite
     batch_insert_sql = """
-    INSERT INTO ImportBatches (filename, file_path, total_rows, valid_rows, invalid_rows, duplicate_rows, status, error_report_path, created_at)
+    INSERT INTO ImportBatches (filename, file_path, total_rows, valid_rows, invalid_rows, duplicate_rows, inserted_rows, updated_rows, status, error_report_path, created_at)
     OUTPUT INSERTED.id
-    VALUES (?, ?, ?, ?, ?, ?, 'completed', ?, GETDATE())
+    VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'completed', ?, GETDATE())
     """
     batch_id = db.execute_scalar_insert(
         batch_insert_sql,
@@ -471,22 +477,370 @@ def parse_and_import_file(file_storage_or_path, column_mappings, duplicate_mode=
         )
     )
 
-    # 2. Insert or Update Villages in SQL Server
+    # 2. Insert or Update Villages in SQL Server / SQLite
     inserted_count = 0
     updated_count = 0
 
+    to_update = [rec for rec in valid_records if rec["is_update"] and rec["existing_id"]]
+    to_insert = [rec for rec in valid_records if not (rec["is_update"] and rec["existing_id"])]
+
     with db.get_db_cursor(commit=True) as cursor:
-        for rec in valid_records:
-            if rec["is_update"] and rec["existing_id"]:
+        for rec in to_update:
+            update_sql = """
+            UPDATE Villages SET
+                zone = COALESCE(NULLIF(?, ''), zone),
+                district_name = ?,
+                subdistrict_name = ?,
+                village_name = ?,
+                geb_connection = COALESCE(NULLIF(?, ''), geb_connection),
+                google_search_orig_nos = CASE WHEN ? > 0 THEN ? ELSE google_search_orig_nos END,
+                google_edited_nos = CASE WHEN ? > 0 THEN ? ELSE google_edited_nos END,
+                total_wells = CASE WHEN ? > 0 THEN ? ELSE total_wells END,
+                dugwells = CASE WHEN ? > 0 THEN ? ELSE dugwells END,
+                bores = CASE WHEN ? > 0 THEN ? ELSE bores END,
+                electric_kuva = CASE WHEN ? > 0 THEN ? ELSE electric_kuva END,
+                electric_bor = CASE WHEN ? > 0 THEN ? ELSE electric_bor END,
+                total_electric = CASE WHEN ? > 0 THEN ? ELSE total_electric END,
+                solar_bor_kuva = CASE WHEN ? > 0 THEN ? ELSE solar_bor_kuva END,
+                total_electric_solar = CASE WHEN ? > 0 THEN ? ELSE total_electric_solar END,
+                raw_geb_data = COALESCE(?, raw_geb_data),
+                remark = COALESCE(NULLIF(?, ''), remark),
+                updated_at = GETDATE()
+            WHERE id = ?
+            """
+            cursor.execute(
+                update_sql,
+                (
+                    rec["zone"], rec["district_name"], rec["subdistrict_name"], rec["village_name"],
+                    rec["geb_connection"], rec["google_search_orig_nos"], rec["google_search_orig_nos"],
+                    rec["google_edited_nos"], rec["google_edited_nos"], rec["total_wells"], rec["total_wells"],
+                    rec["dugwells"], rec["dugwells"], rec["bores"], rec["bores"],
+                    rec["electric_kuva"], rec["electric_kuva"], rec["electric_bor"], rec["electric_bor"],
+                    rec["total_electric"], rec["total_electric"], rec["solar_bor_kuva"], rec["solar_bor_kuva"],
+                    rec["total_electric_solar"], rec["total_electric_solar"], rec["raw_geb_data"],
+                    rec["remark"], rec["existing_id"]
+                )
+            )
+            updated_count += 1
+
+        if to_insert:
+            insert_village_sql = """
+            INSERT INTO Villages (
+                batch_id, zone, district_name, subdistrict_name, village_name, village_code,
+                geb_connection, google_search_orig_nos, google_edited_nos, total_wells,
+                dugwells, bores, electric_kuva, electric_bor, total_electric, solar_bor_kuva, total_electric_solar,
+                raw_geb_data, assignment_status, kml_status, remark, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Unassigned', ?, ?, GETDATE(), GETDATE())
+            """
+            insert_rows = [
+                (
+                    batch_id, rec["zone"], rec["district_name"], rec["subdistrict_name"],
+                    rec["village_name"], rec["village_code"], rec["geb_connection"],
+                    rec["google_search_orig_nos"], rec["google_edited_nos"],
+                    rec["total_wells"], rec["dugwells"], rec["bores"],
+                    rec["electric_kuva"], rec["electric_bor"], rec["total_electric"],
+                    rec["solar_bor_kuva"], rec["total_electric_solar"],
+                    rec["raw_geb_data"], rec["kml_status"], rec["remark"]
+                )
+                for rec in to_insert
+            ]
+            chunk_size = 500
+            for i in range(0, len(insert_rows), chunk_size):
+                chunk = insert_rows[i:i + chunk_size]
+                cursor.executemany(insert_village_sql, chunk)
+            inserted_count = len(insert_rows)
+
+    # 3. Update ImportBatches actual row counts
+    db.execute_non_query(
+        "UPDATE ImportBatches SET inserted_rows = ?, updated_rows = ? WHERE id = ?",
+        (inserted_count, updated_count, batch_id)
+    )
+
+    # 4. Trigger live state synchronization
+    bump_state_version()
+
+    return {
+        "success": True,
+        "batch_id": batch_id,
+        "filename": filename,
+        "total_rows": total_rows,
+        "valid_rows": len(valid_records),
+        "invalid_rows": len(invalid_records),
+        "duplicates_detected": duplicate_count,
+        "inserted_count": inserted_count,
+        "updated_count": updated_count,
+        "error_report_filename": error_report_filename,
+        "has_errors": len(invalid_records) > 0
+    }
+
+
+def get_import_batches_summary():
+    """
+    Retrieve all import batches with actual live database metrics:
+    total_rows, valid_rows, inserted_rows, updated_rows, duplicate_rows, invalid_rows,
+    active_villages_count, assigned_count, completed_count.
+    """
+    batches = db.query_all("""
+    SELECT 
+        b.id,
+        b.filename,
+        b.file_path,
+        b.total_rows,
+        b.valid_rows,
+        COALESCE(b.inserted_rows, b.valid_rows) AS inserted_rows,
+        COALESCE(b.updated_rows, 0) AS updated_rows,
+        b.invalid_rows,
+        b.duplicate_rows,
+        b.status,
+        b.error_report_path,
+        b.created_at,
+        COUNT(v.id) AS active_villages_count,
+        SUM(CASE WHEN v.assigned_person_id IS NOT NULL OR v.assignment_status = 'Assigned' THEN 1 ELSE 0 END) AS assigned_count,
+        SUM(CASE WHEN v.work_status = 'Done' OR v.kml_status IN ('Done', 'Verified', 'Marking Completed', 'Finalized') THEN 1 ELSE 0 END) AS completed_count
+    FROM ImportBatches b
+    LEFT JOIN Villages v ON v.batch_id = b.id
+    GROUP BY b.id
+    ORDER BY b.created_at DESC, b.id DESC
+    """)
+
+    for b in batches:
+        if b.get('error_report_path'):
+            b['error_report_name'] = os.path.basename(b['error_report_path'])
+        else:
+            b['error_report_name'] = None
+        b['active_villages_count'] = int(b.get('active_villages_count') or 0)
+        b['assigned_count'] = int(b.get('assigned_count') or 0)
+        b['completed_count'] = int(b.get('completed_count') or 0)
+        b['inserted_rows'] = int(b.get('inserted_rows') or 0)
+        b['updated_rows'] = int(b.get('updated_rows') or 0)
+        b['total_rows'] = int(b.get('total_rows') or 0)
+        b['duplicate_rows'] = int(b.get('duplicate_rows') or 0)
+        b['invalid_rows'] = int(b.get('invalid_rows') or 0)
+
+    return batches
+
+
+def get_batch_villages_paged(batch_id, page=1, page_size=20, search='', district='', taluka=''):
+    """
+    Efficiently query villages in a specific batch with pagination and server-side filtering.
+    Does not load large datasets into memory at once.
+    """
+    batch = db.query_one("SELECT * FROM ImportBatches WHERE id = ?", (batch_id,))
+    if not batch:
+        return None
+
+    page = max(1, int(page))
+    page_size = min(max(1, int(page_size)), 100)
+    offset = (page - 1) * page_size
+
+    where_clauses = ["v.batch_id = ?"]
+    params = [batch_id]
+
+    if search:
+        s = f"%{search.strip()}%"
+        where_clauses.append("(v.village_name LIKE ? OR v.village_code LIKE ? OR v.district_name LIKE ? OR v.subdistrict_name LIKE ?)")
+        params.extend([s, s, s, s])
+
+    if district:
+        where_clauses.append("v.district_name = ?")
+        params.append(district.strip())
+
+    if taluka:
+        where_clauses.append("v.subdistrict_name = ?")
+        params.append(taluka.strip())
+
+    where_sql = " AND ".join(where_clauses)
+
+    count_res = db.query_one(f"SELECT COUNT(*) AS total FROM Villages v WHERE {where_sql}", params)
+    total_count = count_res['total'] if count_res else 0
+    total_pages = math.ceil(total_count / page_size) if total_count > 0 else 1
+
+    query_sql = f"""
+    SELECT 
+        v.id, v.batch_id, v.zone, v.district_name, v.subdistrict_name,
+        v.village_name, v.village_code, v.geb_connection,
+        v.total_wells, v.dugwells, v.bores, v.electric_kuva, v.electric_bor,
+        v.solar_bor_kuva, v.total_electric, v.total_electric_solar,
+        v.kml_status, COALESCE(v.work_status, 'Not Done') AS work_status,
+        v.assigned_person_name, v.assignment_status, v.remark,
+        v.created_at, v.updated_at
+    FROM Villages v
+    WHERE {where_sql}
+    ORDER BY v.district_name ASC, v.village_name ASC, v.id ASC
+    OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+    """
+    query_params = list(params) + [offset, page_size]
+    items = db.query_all(query_sql, query_params)
+
+    return {
+        "batch": batch,
+        "items": items,
+        "total_count": total_count,
+        "total_pages": total_pages,
+        "current_page": page,
+        "page_size": page_size
+    }
+
+
+def update_single_batch_village(batch_id, village_id, data):
+    """
+    Update details for a specific village within a batch.
+    Preserves assignment and completion status.
+    """
+    village = db.query_one("SELECT * FROM Villages WHERE id = ?", (village_id,))
+    if not village:
+        raise ValueError(f"Village {village_id} not found.")
+
+    def safe_val(k, default):
+        val = data.get(k)
+        return default if val is None or str(val).strip() == '' else str(val).strip()
+
+    def safe_int(k, default=0):
+        val = data.get(k)
+        if val is None or str(val).strip() == '':
+            return default
+        try:
+            return int(re.sub(r'[^\d-]', '', str(val)))
+        except Exception:
+            return default
+
+    v_name = safe_val('village_name', village['village_name'])
+    d_name = safe_val('district_name', village['district_name'])
+    s_name = safe_val('subdistrict_name', village['subdistrict_name'])
+    zone = safe_val('zone', village.get('zone', ''))
+    geb = safe_val('geb_connection', village.get('geb_connection', ''))
+    remark = safe_val('remark', village.get('remark', ''))
+
+    elec_kuva = safe_int('electric_kuva', village.get('electric_kuva', 0))
+    elec_bor = safe_int('electric_bor', village.get('electric_bor', 0))
+    solar = safe_int('solar_bor_kuva', village.get('solar_bor_kuva', 0))
+    dugwells = safe_int('dugwells', village.get('dugwells', 0))
+    bores = safe_int('bores', village.get('bores', 0))
+
+    tot_elec = elec_kuva + elec_bor
+    tot_elec_solar = tot_elec + solar
+    total_wells = safe_int('total_wells', tot_elec_solar if tot_elec_solar > 0 else (dugwells + bores))
+
+    db.execute_non_query("""
+    UPDATE Villages SET
+        village_name = ?,
+        district_name = ?,
+        subdistrict_name = ?,
+        zone = ?,
+        geb_connection = ?,
+        electric_kuva = ?,
+        electric_bor = ?,
+        total_electric = ?,
+        solar_bor_kuva = ?,
+        total_electric_solar = ?,
+        dugwells = ?,
+        bores = ?,
+        total_wells = ?,
+        remark = ?,
+        updated_at = GETDATE()
+    WHERE id = ?
+    """, (
+        v_name, d_name, s_name, zone, geb,
+        elec_kuva, elec_bor, tot_elec, solar, tot_elec_solar,
+        dugwells, bores, total_wells, remark, village_id
+    ))
+
+    bump_state_version()
+    return db.query_one("SELECT * FROM Villages WHERE id = ?", (village_id,))
+
+
+def correct_batch_with_excel(batch_id, file_storage):
+    """
+    Upload a corrected Excel/CSV file to update relevant records in a batch.
+    Uses village_code as primary matching key.
+    Prevents duplicates while preserving assignments and completion status.
+    """
+    batch = db.query_one("SELECT * FROM ImportBatches WHERE id = ?", (batch_id,))
+    if not batch:
+        raise ValueError("Batch not found.")
+
+    filename = file_storage.filename
+    content = file_storage.read()
+    ext = os.path.splitext(filename)[1].lower()
+    file_obj = io.BytesIO(content)
+
+    if ext == '.csv':
+        df = pd.read_csv(file_obj, dtype=str)
+    else:
+        df = pd.read_excel(file_obj, dtype=str, engine='openpyxl')
+
+    auto_mappings = detect_column_mappings(list(df.columns))
+    rename_dict = {actual: canonical for actual, canonical in auto_mappings.items() if canonical}
+    df = df.rename(columns=rename_dict)
+
+    if 'village_code' not in df.columns:
+        raise ValueError("The uploaded Excel file must contain a 'Village Code' column for reliable record matching.")
+
+    # Fetch all existing villages from DB keyed by village_code
+    existing_villages = {
+        row['village_code'].strip(): row
+        for row in db.query_all("SELECT id, batch_id, village_code, assignment_status, assigned_person_id, work_status, kml_status FROM Villages")
+        if row.get('village_code')
+    }
+
+    updated_count = 0
+    to_insert_records = []
+
+    def safe_int(val, default=0):
+        if val is None or pd.isna(val):
+            return default
+        try:
+            cleaned = re.sub(r'[^\d-]', '', str(val))
+            return int(cleaned) if cleaned else default
+        except Exception:
+            return default
+
+    with db.get_db_cursor(commit=True) as cursor:
+        for idx, row in df.iterrows():
+            row_dict = row.to_dict()
+            v_code = str(row_dict.get('village_code', '')).strip()
+            if not v_code or v_code.lower() == 'nan':
+                continue
+
+            v_name = str(row_dict.get('village_name', '')).strip() if 'village_name' in row_dict and not pd.isna(row_dict.get('village_name')) else ''
+            d_name = str(row_dict.get('district_name', '')).strip() if 'district_name' in row_dict and not pd.isna(row_dict.get('district_name')) else ''
+            s_name = str(row_dict.get('subdistrict_name', '')).strip() if 'subdistrict_name' in row_dict and not pd.isna(row_dict.get('subdistrict_name')) else ''
+            zone = str(row_dict.get('zone', '')).strip() if 'zone' in row_dict and not pd.isna(row_dict.get('zone')) else ''
+            geb = str(row_dict.get('geb_connection', '')).strip() if 'geb_connection' in row_dict and not pd.isna(row_dict.get('geb_connection')) else ''
+            remark = str(row_dict.get('remark', '')).strip() if 'remark' in row_dict and not pd.isna(row_dict.get('remark')) else ''
+
+            elec_kuva = safe_int(row_dict.get('electric_kuva', 0))
+            elec_bor = safe_int(row_dict.get('electric_bor', 0))
+            tot_elec = safe_int(row_dict.get('total_electric', 0))
+            solar_bk = safe_int(row_dict.get('solar_bor_kuva', 0))
+            tot_elec_solar = safe_int(row_dict.get('total_electric_solar', 0))
+            dugwells = safe_int(row_dict.get('dugwells', 0))
+            bores = safe_int(row_dict.get('bores', 0))
+            total = safe_int(row_dict.get('total_wells', 0))
+
+            if tot_elec == 0 and (elec_kuva > 0 or elec_bor > 0):
+                tot_elec = elec_kuva + elec_bor
+            if tot_elec_solar == 0 and (tot_elec > 0 or solar_bk > 0):
+                tot_elec_solar = tot_elec + solar_bk
+            if total == 0 and tot_elec_solar > 0:
+                total = tot_elec_solar
+            elif total == 0 and (dugwells > 0 or bores > 0):
+                total = dugwells + bores
+
+            raw_row_data = {str(k): ('' if pd.isna(v) else str(v).strip()) for k, v in row.items()}
+            raw_geb_json = json.dumps(raw_row_data, ensure_ascii=False)
+
+            existing = existing_villages.get(v_code)
+            if existing:
+                # Update existing village matching village_code
                 update_sql = """
                 UPDATE Villages SET
                     zone = COALESCE(NULLIF(?, ''), zone),
-                    district_name = ?,
-                    subdistrict_name = ?,
-                    village_name = ?,
+                    district_name = COALESCE(NULLIF(?, ''), district_name),
+                    subdistrict_name = COALESCE(NULLIF(?, ''), subdistrict_name),
+                    village_name = COALESCE(NULLIF(?, ''), village_name),
                     geb_connection = COALESCE(NULLIF(?, ''), geb_connection),
-                    google_search_orig_nos = CASE WHEN ? > 0 THEN ? ELSE google_search_orig_nos END,
-                    google_edited_nos = CASE WHEN ? > 0 THEN ? ELSE google_edited_nos END,
                     total_wells = CASE WHEN ? > 0 THEN ? ELSE total_wells END,
                     dugwells = CASE WHEN ? > 0 THEN ? ELSE dugwells END,
                     bores = CASE WHEN ? > 0 THEN ? ELSE bores END,
@@ -503,53 +857,192 @@ def parse_and_import_file(file_storage_or_path, column_mappings, duplicate_mode=
                 cursor.execute(
                     update_sql,
                     (
-                        rec["zone"], rec["district_name"], rec["subdistrict_name"], rec["village_name"],
-                        rec["geb_connection"], rec["google_search_orig_nos"], rec["google_search_orig_nos"],
-                        rec["google_edited_nos"], rec["google_edited_nos"], rec["total_wells"], rec["total_wells"],
-                        rec["dugwells"], rec["dugwells"], rec["bores"], rec["bores"],
-                        rec["electric_kuva"], rec["electric_kuva"], rec["electric_bor"], rec["electric_bor"],
-                        rec["total_electric"], rec["total_electric"], rec["solar_bor_kuva"], rec["solar_bor_kuva"],
-                        rec["total_electric_solar"], rec["total_electric_solar"], rec["raw_geb_data"],
-                        rec["remark"], rec["existing_id"]
+                        zone, d_name, s_name, v_name, geb,
+                        total, total, dugwells, dugwells, bores, bores,
+                        elec_kuva, elec_kuva, elec_bor, elec_bor, tot_elec, tot_elec,
+                        solar_bk, solar_bk, tot_elec_solar, tot_elec_solar,
+                        raw_geb_json, remark, existing['id']
                     )
                 )
                 updated_count += 1
             else:
-                insert_village_sql = """
-                INSERT INTO Villages (
-                    batch_id, zone, district_name, subdistrict_name, village_name, village_code,
-                    geb_connection, google_search_orig_nos, google_edited_nos, total_wells,
-                    dugwells, bores, electric_kuva, electric_bor, total_electric, solar_bor_kuva, total_electric_solar,
-                    raw_geb_data, assignment_status, kml_status, remark, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Unassigned', ?, ?, GETDATE(), GETDATE())
-                """
-                cursor.execute(
-                    insert_village_sql,
-                    (
-                        batch_id, rec["zone"], rec["district_name"], rec["subdistrict_name"],
-                        rec["village_name"], rec["village_code"], rec["geb_connection"],
-                        rec["google_search_orig_nos"], rec["google_edited_nos"],
-                        rec["total_wells"], rec["dugwells"], rec["bores"],
-                        rec["electric_kuva"], rec["electric_bor"], rec["total_electric"],
-                        rec["solar_bor_kuva"], rec["total_electric_solar"],
-                        rec["raw_geb_data"], rec["kml_status"], rec["remark"]
-                    )
-                )
-                inserted_count += 1
+                # New village row to add
+                if v_name and d_name and s_name:
+                    to_insert_records.append((
+                        batch_id, zone, d_name, s_name, v_name, v_code, geb,
+                        0, 0, total, dugwells, bores, elec_kuva, elec_bor,
+                        tot_elec, solar_bk, tot_elec_solar, raw_geb_json,
+                        'Unassigned', 'Pending', remark
+                    ))
+
+        if to_insert_records:
+            insert_sql = """
+            INSERT INTO Villages (
+                batch_id, zone, district_name, subdistrict_name, village_name, village_code,
+                geb_connection, google_search_orig_nos, google_edited_nos, total_wells,
+                dugwells, bores, electric_kuva, electric_bor, total_electric, solar_bor_kuva, total_electric_solar,
+                raw_geb_data, assignment_status, kml_status, remark, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Unassigned', ?, ?, GETDATE(), GETDATE())
+            """
+            for i in range(0, len(to_insert_records), 500):
+                chunk = to_insert_records[i:i + 500]
+                cursor.executemany(insert_sql, chunk)
+
+    inserted_count = len(to_insert_records)
+
+    # Update batch row counters
+    db.execute_non_query("""
+    UPDATE ImportBatches SET
+        updated_rows = COALESCE(updated_rows, 0) + ?,
+        inserted_rows = COALESCE(inserted_rows, 0) + ?,
+        total_rows = total_rows + ?,
+        valid_rows = valid_rows + ?
+    WHERE id = ?
+    """, (updated_count, inserted_count, inserted_count, inserted_count, batch_id))
+
+    bump_state_version()
 
     return {
         "success": True,
         "batch_id": batch_id,
-        "filename": filename,
-        "total_rows": total_rows,
-        "valid_rows": len(valid_records),
-        "invalid_rows": len(invalid_records),
-        "duplicates_detected": duplicate_count,
-        "inserted_count": inserted_count,
         "updated_count": updated_count,
-        "error_report_filename": error_report_filename,
-        "has_errors": len(invalid_records) > 0
+        "inserted_count": inserted_count,
+        "total_processed": len(df)
+    }
+
+
+def check_batch_delete_safety(batch_id):
+    """
+    Check if a batch contains assigned or completed villages before allowing deletion.
+    """
+    batch = db.query_one("SELECT * FROM ImportBatches WHERE id = ?", (batch_id,))
+    if not batch:
+        return None
+
+    total_v = db.query_one("SELECT COUNT(*) AS c FROM Villages WHERE batch_id = ?", (batch_id,))['c']
+    assigned_v = db.query_one("SELECT COUNT(*) AS c FROM Villages WHERE batch_id = ? AND (assigned_person_id IS NOT NULL OR assignment_status = 'Assigned')", (batch_id,))['c']
+    completed_v = db.query_one("SELECT COUNT(*) AS c FROM Villages WHERE batch_id = ? AND (work_status = 'Done' OR kml_status IN ('Done', 'Verified', 'Marking Completed', 'Finalized'))", (batch_id,))['c']
+
+    protected_v = db.query_one("""
+    SELECT COUNT(*) AS c FROM Villages 
+    WHERE batch_id = ? AND (
+        assigned_person_id IS NOT NULL 
+        OR assignment_status = 'Assigned' 
+        OR work_status = 'Done' 
+        OR kml_status IN ('Done', 'Verified', 'Marking Completed', 'Finalized')
+        OR id IN (SELECT village_id FROM ProcessingHistory)
+    )
+    """, (batch_id,))['c']
+
+    eligible_v = total_v - protected_v
+
+    return {
+        "batch_id": batch_id,
+        "filename": batch['filename'],
+        "total_villages": total_v,
+        "assigned_villages": assigned_v,
+        "completed_villages": completed_v,
+        "protected_villages": protected_v,
+        "eligible_villages": eligible_v,
+        "is_safe": (protected_v == 0)
+    }
+
+
+def delete_import_batch(batch_id, force=False):
+    """
+    Safely delete an import batch and all of its eligible batch-owned records.
+    Protects villages that have assignments, completed work, or marking history by preserving them
+    and disassociating them from the batch, while cleanly deleting eligible batch-only records.
+    Maintains a database snapshot backup before deletion.
+    """
+    batch = db.query_one("SELECT * FROM ImportBatches WHERE id = ?", (batch_id,))
+    if not batch:
+        raise ValueError(f"Batch #{batch_id} not found.")
+
+    safety = check_batch_delete_safety(batch_id)
+    if not safety:
+        raise ValueError(f"Batch #{batch_id} not found.")
+
+    # Clean up associated uploaded file and error report file from disk if present
+    for path_key in ('file_path', 'error_report_path'):
+        raw_p = batch.get(path_key)
+        if raw_p:
+            try:
+                p = Path(raw_p)
+                if p.exists() and p.is_file():
+                    p.unlink(missing_ok=True)
+            except Exception as fe:
+                logger.warning(f"Failed to delete batch file {raw_p}: {fe}")
+
+    # Safe backup snapshot before deletion
+    try:
+        backup_dir = Config.BASE_DIR / 'backups'
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_file = backup_dir / f"backup_before_delete_batch_{batch_id}_{int(time.time())}.db"
+        if db.detect_db_mode() == 'sqlite':
+            import shutil
+            shutil.copy2(db.SQLITE_DB_PATH, backup_file)
+            logger.info(f"Database backup saved to: {backup_file}")
+    except Exception as e:
+        logger.warning(f"Database pre-delete backup notice: {e}")
+
+    # Atomic transactional deletion of batch records
+    with db.get_db_cursor(commit=True) as cursor:
+        # 1. Identify protected village IDs that have assignments, completed work, or marking history
+        cursor.execute("""
+            SELECT id FROM Villages 
+            WHERE batch_id = ? AND (
+                assigned_person_id IS NOT NULL 
+                OR assignment_status = 'Assigned' 
+                OR work_status = 'Done' 
+                OR kml_status IN ('Done', 'Verified', 'Marking Completed', 'Finalized')
+                OR id IN (SELECT village_id FROM ProcessingHistory)
+            )
+        """, (batch_id,))
+        protected_rows = cursor.fetchall()
+        protected_ids = [r['id'] if isinstance(r, dict) else r[0] for r in protected_rows]
+
+        # 2. Identify eligible village IDs to permanently remove
+        cursor.execute("""
+            SELECT id FROM Villages 
+            WHERE batch_id = ? AND (
+                assigned_person_id IS NULL 
+                AND (assignment_status IS NULL OR assignment_status != 'Assigned')
+                AND (work_status IS NULL OR work_status != 'Done')
+                AND (kml_status IS NULL OR kml_status NOT IN ('Done', 'Verified', 'Marking Completed', 'Finalized'))
+                AND id NOT IN (SELECT village_id FROM ProcessingHistory)
+            )
+        """, (batch_id,))
+        eligible_rows = cursor.fetchall()
+        eligible_ids = [r['id'] if isinstance(r, dict) else r[0] for r in eligible_rows]
+
+        # 3. For protected villages, preserve all village records & survey work, disassociating batch_id
+        if protected_ids:
+            ph = ",".join("?" * len(protected_ids))
+            cursor.execute(f"UPDATE Villages SET batch_id = NULL WHERE batch_id = ? AND id IN ({ph})", [batch_id] + protected_ids)
+
+        # 4. For eligible unworked/unassigned villages, cleanly delete all related records
+        if eligible_ids:
+            ph_el = ",".join("?" * len(eligible_ids))
+            cursor.execute(f"DELETE FROM VillageAssignments WHERE village_id IN ({ph_el})", eligible_ids)
+            cursor.execute(f"DELETE FROM ProcessingHistory WHERE village_id IN ({ph_el})", eligible_ids)
+            cursor.execute(f"DELETE FROM AdminNotifications WHERE village_id IN ({ph_el})", eligible_ids)
+            cursor.execute(f"DELETE FROM KMLFiles WHERE village_id IN ({ph_el})", eligible_ids)
+            cursor.execute(f"DELETE FROM Villages WHERE id IN ({ph_el})", eligible_ids)
+
+        # 5. Delete the batch record from ImportBatches
+        cursor.execute("DELETE FROM ImportBatches WHERE id = ?", (batch_id,))
+
+    bump_state_version()
+
+    return {
+        "success": True,
+        "batch_id": batch_id,
+        "filename": safety['filename'],
+        "deleted_villages": len(eligible_ids),
+        "protected_villages": len(protected_ids),
+        "total_villages": safety['total_villages']
     }
 
 

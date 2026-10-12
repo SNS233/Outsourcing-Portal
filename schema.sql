@@ -224,4 +224,68 @@ BEGIN
 END
 GO
 
+-- 11. UserCompletionHistory Table
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'UserCompletionHistory')
+BEGIN
+    CREATE TABLE UserCompletionHistory (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        user_id INT NOT NULL,
+        village_id INT NOT NULL,
+        village_name NVARCHAR(150) NOT NULL,
+        completion_date NVARCHAR(50) NOT NULL,
+        completed_at DATETIME2 DEFAULT GETDATE(),
+        created_at DATETIME2 DEFAULT GETDATE(),
+        CONSTRAINT UQ_UserCompletionHistory_UserVillage UNIQUE (user_id, village_id)
+    );
+
+    CREATE INDEX IX_UserCompletionHistory_User ON UserCompletionHistory(user_id, completed_at DESC);
+END
+GO
+
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('UserCompletionHistory') AND name = 'is_active')
+BEGIN
+    ALTER TABLE UserCompletionHistory ADD is_active BIT DEFAULT 1;
+    ALTER TABLE UserCompletionHistory ADD status NVARCHAR(50) DEFAULT 'Completed';
+    ALTER TABLE UserCompletionHistory ADD review_url NVARCHAR(1000) NULL;
+END
+GO
+
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('Villages') AND name = 'correction_reason')
+BEGIN
+    ALTER TABLE Villages ADD correction_reason NVARCHAR(MAX) NULL;
+    ALTER TABLE Villages ADD reopened_at DATETIME2 NULL;
+    ALTER TABLE Villages ADD reopened_by NVARCHAR(150) NULL;
+END
+GO
+
+-- 12. VillageCorrectionAudit Table
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'VillageCorrectionAudit')
+BEGIN
+    CREATE TABLE VillageCorrectionAudit (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        village_id INT NOT NULL,
+        village_name NVARCHAR(150) NOT NULL,
+        village_code NVARCHAR(100) NOT NULL,
+        previous_person_id INT NULL,
+        previous_person_name NVARCHAR(150) NULL,
+        previous_user_id INT NULL,
+        previous_user_name NVARCHAR(150) NULL,
+        previous_completed_at DATETIME2 NULL,
+        reopened_by NVARCHAR(150) NOT NULL,
+        reopened_at DATETIME2 DEFAULT GETDATE(),
+        correction_reason NVARCHAR(MAX) NOT NULL,
+        new_person_id INT NULL,
+        new_person_name NVARCHAR(150) NULL,
+        new_user_id INT NULL,
+        resolved_at DATETIME2 NULL,
+        resolved_by NVARCHAR(150) NULL,
+        status NVARCHAR(50) DEFAULT 'Pending Correction'
+    );
+
+    CREATE INDEX IX_CorrectionAudit_Village ON VillageCorrectionAudit(village_id);
+    CREATE INDEX IX_CorrectionAudit_Status ON VillageCorrectionAudit(status);
+END
+GO
+
+
 

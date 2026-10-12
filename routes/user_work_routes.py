@@ -170,3 +170,45 @@ def mark_read():
     except Exception as e:
         logger.error(f"Error marking notifications as read: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@user_work_bp.route('/api/user/history', methods=['GET'])
+@login_required
+def get_user_history():
+    """
+    Retrieve real-time completed village history for the logged-in user.
+    Strictly returns: village_name and completion_date (DD-MM-YYYY in Indian local time).
+    """
+    try:
+        user_id = session.get('user_id')
+        history_items = user_work_service.get_user_history(user_id)
+        return jsonify({
+            'success': True,
+            'items': history_items,
+            'total_count': len(history_items)
+        })
+    except Exception as e:
+        logger.error(f"Error fetching user history: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@user_work_bp.route('/api/user/villages/<int:village_id>/complete', methods=['POST'])
+@login_required
+def mark_village_completed(village_id):
+    """
+    Explicitly mark village as completed for the authenticated user and record history.
+    """
+    try:
+        user_id = session.get('user_id')
+        user_name = session.get('full_name') or session.get('username')
+        result = user_work_service.save_surveyor_village(
+            village_id=village_id,
+            user_id=user_id,
+            user_name=user_name,
+            data={'mark_completed': True, 'status': 'Done'}
+        )
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error marking village completed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+

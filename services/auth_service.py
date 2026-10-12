@@ -3,60 +3,63 @@ import functools
 from flask import session, jsonify, request
 from werkzeug.security import check_password_hash, generate_password_hash
 import db
-
 import logging
 
 logger = logging.getLogger(__name__)
 
 def authenticate_user(username, password):
-    """Authenticate user with username and password against SQL Server with graceful fallback."""
+    """
+    Authenticate user strictly against canonical database credentials.
+    Rejects any invalid or outdated passwords with no hardcoded fallback bypasses.
+    """
+    if not username or not password:
+        return None
+
+    clean_username = str(username).strip()
+    
     try:
         if db.is_db_available():
-            user = db.query_one("SELECT * FROM Users WHERE username = ? AND is_active = 1", (username,))
-            if user and check_password_hash(user['password_hash'], password):
-                return {
-                    'id': user['id'],
-                    'username': user['username'],
-                    'full_name': user.get('full_name') or user['username'],
-                    'role': user.get('role', 'user')
-                }
+            user = db.query_one(
+                "SELECT id, username, full_name, role, password_hash, is_active FROM Users WHERE LOWER(username) = LOWER(?) AND is_active = 1",
+                (clean_username,)
+            )
+            if user:
+                if check_password_hash(user['password_hash'], password):
+                    return {
+                        'id': user['id'],
+                        'username': user['username'],
+                        'full_name': user.get('full_name') or user['username'],
+                        'role': user.get('role', 'user')
+                    }
+                else:
+                    logger.warning(f"Failed authentication attempt for '{clean_username}': incorrect password.")
+                    return None
+            else:
+                logger.warning(f"Failed authentication attempt: user '{clean_username}' not found or inactive.")
+                return None
+        else:
+            logger.error("Authentication failed: database is not available.")
+            return None
     except Exception as e:
-        logger.warning(f"Database query notice during auth: {e}")
-
-    # Fallback to configured admin credentials if DB is temporarily offline/unreachable
-    valid_users = {'admin', 'admin@kmltodata.local'}
-    valid_passwords = {'Admin@12345', 'Admin@123'}
-    configured_user = os.getenv('PORTAL_USERNAME')
-    configured_pass = os.getenv('PORTAL_PASSWORD')
-    if configured_user:
-        valid_users.add(configured_user.strip().lower())
-    if configured_pass:
-        valid_passwords.add(configured_pass.strip())
-
-    if (username.strip().lower() in valid_users or username.strip().lower() == 'admin') and password in valid_passwords:
-        return {
-            'id': 1,
-            'username': username,
-            'full_name': 'System Administrator',
-            'role': 'admin'
-        }
-    return None
+        logger.error(f"Database error during authentication for '{clean_username}': {e}")
+        return None
 
 
 def get_current_user():
-    """Retrieve current logged in user dict from session."""
+    """Retrieve current logged in user dict from session verified against database."""
     user_id = session.get('user_id')
     if not user_id:
         return None
     try:
         if db.is_db_available():
-            user = db.query_one("SELECT id, username, full_name, role, is_active FROM Users WHERE id = ?", (user_id,))
+            user = db.query_one(
+                "SELECT id, username, full_name, role, is_active FROM Users WHERE id = ? AND is_active = 1",
+                (user_id,)
+            )
             if user:
                 return user
-    except Exception:
-        pass
-    if user_id == 1:
-        return {'id': 1, 'username': session.get('username', 'admin'), 'full_name': 'System Administrator', 'role': 'admin', 'is_active': 1}
+    except Exception as e:
+        logger.error(f"Error retrieving current user {user_id}: {e}")
     return None
 
 
@@ -86,18 +89,62 @@ def admin_required(f):
     return decorated_function
 
 
-def change_password(user_id, old_password, new_password):
-    """Verify old password and update to new password."""
-    user = db.query_one("SELECT password_hash FROM Users WHERE id = ?", (user_id,))
-    if not user:
-        return False, "User not found"
-    
-    if not check_password_hash(user['password_hash'], old_password):
-        return False, "Current password is incorrect"
-    
+def change_password(user_id, old_password, new_password, confirm_password=None):
+    """
+    Verify old password and atomically update to new password in the database.
+    Strictly replaces the old password hash so the previous password is never accepted.
+    """
+    if not user_id:
+        return False, "Authentication session required."
+
+    if not old_password:
+        return False, "Current password is required."
+
+    if not new_password:
+        return False, "New password is required."
+
     if len(new_password) < 6:
-        return False, "New password must be at least 6 characters"
-    
-    new_hash = generate_password_hash(new_password)
-    db.execute_non_query("UPDATE Users SET password_hash = ? WHERE id = ?", (new_hash, user_id))
-    return True, "Password updated successfully"
+        return False, "New password must be at least 6 characters long."
+
+    if confirm_password is not None and str(new_password) != str(confirm_password):
+        return False, "New password and confirmation password do not match."
+
+    if old_password == new_password:
+        return False, "New password must be different from current password."
+
+    try:
+        user = db.query_one("SELECT id, username, password_hash, is_active FROM Users WHERE id = ?", (user_id,))
+        if not user:
+            return False, "User account not found."
+
+        if not user.get('is_active', 1):
+            return False, "User account is inactive."
+
+        # Verify old password
+        if not check_password_hash(user['password_hash'], old_password):
+            return False, "Current password is incorrect."
+
+        # Securely hash new password
+        new_hash = generate_password_hash(new_password)
+
+        # Update password hash in database
+        db.execute_non_query(
+            "UPDATE Users SET password_hash = ? WHERE id = ?",
+            (new_hash, user_id)
+        )
+
+        # Verify database commit
+        verified_user = db.query_one("SELECT password_hash FROM Users WHERE id = ?", (user_id,))
+        if not verified_user or not check_password_hash(verified_user['password_hash'], new_password):
+            return False, "Database failed to persist new password. Please try again."
+
+        # Verify old password is no longer valid
+        if check_password_hash(verified_user['password_hash'], old_password):
+            return False, "Security verification failed: old password is still valid."
+
+        logger.info(f"Password successfully changed for user ID {user_id} ('{user.get('username')}').")
+        return True, "Password updated successfully."
+
+    except Exception as e:
+        logger.error(f"Database error during password change for user ID {user_id}: {e}")
+        return False, f"Failed to update password: {str(e)}"

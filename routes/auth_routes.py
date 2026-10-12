@@ -63,10 +63,13 @@ def get_me():
 @login_required
 def update_password():
     data = request.get_json() or {}
-    old_pw = data.get('old_password', '')
-    new_pw = data.get('new_password', '')
+    old_pw = str(data.get('old_password') or '')
+    new_pw = str(data.get('new_password') or '')
+    confirm_pw = data.get('confirm_password')
+    if confirm_pw is not None:
+        confirm_pw = str(confirm_pw)
     
-    success, msg = change_password(session['user_id'], old_pw, new_pw)
+    success, msg = change_password(session['user_id'], old_pw, new_pw, confirm_pw)
     if not success:
         return jsonify({'success': False, 'error': msg}), 400
     return jsonify({'success': True, 'message': msg})

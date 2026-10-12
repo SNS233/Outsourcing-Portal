@@ -8,8 +8,13 @@ from services.village_service import (
     bulk_update_status,
     get_queue_navigation,
     delete_village,
-    bulk_delete_unassigned_villages
+    bulk_delete_unassigned_villages,
+    reopen_completed_village,
+    get_village_correction_history,
+    reassign_village,
+    get_village_full_assignment_history
 )
+import services.user_work_service as user_work_service
 import db
 
 village_bp = Blueprint('village_bp', __name__)
@@ -17,6 +22,9 @@ village_bp = Blueprint('village_bp', __name__)
 @village_bp.route('/api/villages', methods=['GET'])
 @login_required
 def list_villages():
+    if session.get('role') != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized. Admin access required.'}), 403
+
     page = request.args.get('page', 1, type=int)
     page_size = request.args.get('page_size', 20, type=int)
     search = request.args.get('search', '', type=str)
@@ -24,6 +32,8 @@ def list_villages():
     subdistrict = request.args.get('subdistrict', '', type=str)
     zone = request.args.get('zone', '', type=str)
     status = request.args.get('status', '', type=str)
+    person_id = request.args.get('person_id', None, type=int)
+    assignment_status = request.args.get('assignment_status', '', type=str)
     sort_by = request.args.get('sort_by', 'district_name', type=str)
     sort_dir = request.args.get('sort_dir', 'asc', type=str)
 
@@ -36,6 +46,8 @@ def list_villages():
             subdistrict=subdistrict,
             zone=zone,
             status=status,
+            person_id=person_id,
+            assignment_status=assignment_status,
             sort_by=sort_by,
             sort_dir=sort_dir
         )
@@ -87,6 +99,109 @@ def delete_village_endpoint(village_id):
         return jsonify({'success': False, 'error': str(ve)}), 404
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@village_bp.route('/api/villages/<int:village_id>/reopen', methods=['POST'])
+@login_required
+def reopen_village_endpoint(village_id):
+    """
+    Admin-only: Reopen a completed village and send it for correction.
+    Requires correction reason, and optionally reassigns to another field surveyor.
+    """
+    if session.get('role') != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized. Admin privileges required to reopen villages.'}), 403
+
+    data = request.get_json() or {}
+    reason = (data.get('reason') or '').strip()
+    new_person_id = data.get('new_person_id') if data.get('new_person_id') is not None else data.get('person_id')
+    reopened_by = session.get('username', 'Admin')
+
+    if not reason:
+        return jsonify({'success': False, 'error': 'Correction reason is required.'}), 400
+
+    try:
+        res = reopen_completed_village(
+            village_id=village_id,
+            reason=reason,
+            new_person_id=new_person_id,
+            reopened_by=reopened_by
+        )
+        return jsonify({
+            'success': True,
+            'message': f"Village '{res.get('village_name')}' reopened and sent for correction.",
+            'data': res
+        }), 200
+    except ValueError as ve:
+        return jsonify({'success': False, 'error': str(ve)}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@village_bp.route('/api/villages/<int:village_id>/corrections', methods=['GET'])
+@login_required
+def get_village_corrections_endpoint(village_id):
+    """Retrieve full audit history of corrections for a village."""
+    try:
+        corrections = get_village_correction_history(village_id)
+        return jsonify({'success': True, 'corrections': corrections, 'data': corrections})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@village_bp.route('/api/villages/<int:village_id>/reassign', methods=['POST'])
+@login_required
+def reassign_village_endpoint(village_id):
+    """
+    Reassign a village to another surveyor.
+    Admin-only operation.
+    """
+    if session.get('role') != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized. Admin access required.'}), 403
+
+    data = request.get_json() or {}
+    new_person_id = data.get('person_id') or data.get('new_person_id')
+    reason = data.get('reason')
+    reassigned_by = session.get('username', 'Admin')
+
+    if not new_person_id:
+        return jsonify({'success': False, 'error': 'Please select a new surveyor to reassign.'}), 400
+
+    try:
+        res = reassign_village(
+            village_id=village_id,
+            new_person_id=new_person_id,
+            reassigned_by=reassigned_by,
+            reason=reason
+        )
+        return jsonify({
+            'success': True,
+            'message': f"Village '{res.get('village_name')}' successfully reassigned to {res.get('new_person')}.",
+            'data': res
+        }), 200
+    except ValueError as ve:
+        return jsonify({'success': False, 'error': str(ve)}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@village_bp.route('/api/villages/<int:village_id>/assignment-history', methods=['GET'])
+@login_required
+def get_village_assignment_history_endpoint(village_id):
+    """
+    Retrieve full audit history of assignments, reassignments, corrections and processing events.
+    Admin-only operation.
+    """
+    if session.get('role') != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized. Admin access required.'}), 403
+
+    try:
+        history_data = get_village_full_assignment_history(village_id)
+        if not history_data:
+            return jsonify({'success': False, 'error': 'Village not found.'}), 404
+        return jsonify({'success': True, 'data': history_data}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 
 @village_bp.route('/api/villages/bulk-delete', methods=['POST'])
@@ -168,12 +283,68 @@ def get_filter_options():
     try:
         districts = [r['district_name'] for r in db.query_all("SELECT DISTINCT district_name FROM Villages WHERE district_name IS NOT NULL ORDER BY district_name")]
         subdistricts = [r['subdistrict_name'] for r in db.query_all("SELECT DISTINCT subdistrict_name FROM Villages WHERE subdistrict_name IS NOT NULL ORDER BY subdistrict_name")]
-        zones = [r['zone'] for r in db.query_all("SELECT DISTINCT zone FROM Villages WHERE zone IS NOT NULL AND zone <> '' ORDER BY zone")]
+        zones = ['GPIC', 'KPIC', 'VPIC', 'RPIC']
+        extra_zones = [r['zone'] for r in db.query_all("SELECT DISTINCT zone FROM Villages WHERE zone IS NOT NULL AND zone <> '' AND UPPER(TRIM(zone)) NOT IN ('GPIC', 'KPIC', 'VPIC', 'RPIC') ORDER BY zone")]
+        if extra_zones:
+            zones.append('Other / Unassigned')
+        persons = [{'id': r['id'], 'name': r['name']} for r in db.query_all("SELECT id, name FROM Persons WHERE is_active = 1 ORDER BY name ASC")]
         return jsonify({
             'success': True,
             'districts': districts,
             'subdistricts': subdistricts,
-            'zones': zones
+            'zones': zones,
+            'persons': persons
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@village_bp.route('/api/villages/<int:village_id>/review-url', methods=['GET'])
+@login_required
+def get_village_review_url(village_id):
+    """
+    Retrieve genuine stored review URL and saved markings for a village.
+    Protected by Admin authentication (or assigned surveyor).
+    Never generates a fake URL.
+    """
+    try:
+        user_id = session.get('user_id')
+        role = session.get('role')
+        village = db.query_one("""
+            SELECT id, village_name, village_code, zone, district_name, subdistrict_name,
+                   assigned_person_id, assigned_person_name,
+                   dugwells, bores, total_wells, work_status, kml_status,
+                   generated_review_url, updated_at
+            FROM Villages WHERE id = ?
+        """, (village_id,))
+        if not village:
+            return jsonify({'success': False, 'error': 'Village not found'}), 404
+
+        # If user is not admin, ensure village is assigned to user
+        if role != 'admin':
+            person = user_work_service.get_linked_person_for_user(user_id)
+            if not person or village.get('assigned_person_id') != person['id']:
+                return jsonify({'success': False, 'error': 'Access denied'}), 403
+
+        review_url = village.get('generated_review_url')
+        if not review_url:
+            uch = db.query_one("SELECT review_url FROM UserCompletionHistory WHERE village_id = ? AND review_url IS NOT NULL ORDER BY id DESC LIMIT 1", (village_id,))
+            if uch and uch.get('review_url'):
+                review_url = uch['review_url']
+
+        return jsonify({
+            'success': True,
+            'village_id': village['id'],
+            'village_name': village['village_name'],
+            'village_code': village.get('village_code'),
+            'review_url': review_url,
+            'dugwells': village.get('dugwells', 0),
+            'bores': village.get('bores', 0),
+            'total_wells': village.get('total_wells', 0),
+            'work_status': village.get('work_status'),
+            'kml_status': village.get('kml_status'),
+            'has_review_url': bool(review_url)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+

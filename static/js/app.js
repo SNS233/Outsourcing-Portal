@@ -4,86 +4,20 @@
  */
 
 /* =========================================================================
-   THEME MANAGER (LIGHT / DARK MODE ENGINE)
+   PERMANENT LIGHT THEME ENFORCEMENT
    ========================================================================= */
 const ThemeManager = {
     init() {
-        const saved = localStorage.getItem('app_theme') || 'light';
-        this.applyTheme(saved, false);
-        this.updateControls();
-    },
-
-    setTheme(theme) {
-        if (theme !== 'light' && theme !== 'dark') theme = 'light';
-        localStorage.setItem('app_theme', theme);
-        this.applyTheme(theme, true);
-    },
-
-    toggleTheme() {
-        const current = document.documentElement.getAttribute('data-theme') || 'light';
-        const next = current === 'dark' ? 'light' : 'dark';
-        this.setTheme(next);
-    },
-
-    applyTheme(theme, notify = false) {
-        document.documentElement.setAttribute('data-theme', theme);
+        try { localStorage.removeItem('app_theme'); } catch (e) {}
+        document.documentElement.setAttribute('data-theme', 'light');
         if (document.body) {
-            document.body.setAttribute('data-theme', theme);
-        }
-
-        // Update header toggle icons & labels
-        const adminIcon = document.getElementById('headerThemeIcon');
-        const userIcon = document.getElementById('userHeaderThemeIcon');
-        const iconName = theme === 'dark' ? 'sun' : 'moon';
-        
-        [adminIcon, userIcon].forEach(el => {
-            if (el) {
-                el.setAttribute('data-lucide', iconName);
-                el.style.color = theme === 'dark' ? '#f59e0b' : '#64748b';
-            }
-        });
-
-        const headerText = document.getElementById('headerThemeText');
-        if (headerText) {
-            headerText.textContent = theme === 'dark' ? 'Light' : 'Dark';
-        }
-
-        this.updateControls();
-
-        if (window.lucide) {
-            lucide.createIcons();
-        }
-
-        if (window.App && App.charts && App.charts.statusChart && typeof DashboardManager !== 'undefined' && DashboardManager.load) {
-            DashboardManager.load();
-        }
-
-        if (notify && window.App && App.toast) {
-            App.toast(`Appearance switched to ${theme === 'dark' ? 'Dark Mode' : 'Light Mode'}`, 'info');
+            document.body.setAttribute('data-theme', 'light');
         }
     },
-
-    updateControls() {
-        const current = document.documentElement.getAttribute('data-theme') || 'light';
-        
-        const radioLight = document.getElementById('themeRadioLight');
-        const radioDark = document.getElementById('themeRadioDark');
-        const cardLight = document.getElementById('themeCardLight');
-        const cardDark = document.getElementById('themeCardDark');
-        const badge = document.getElementById('currentThemeBadge');
-
-        if (radioLight) radioLight.checked = (current === 'light');
-        if (radioDark) radioDark.checked = (current === 'dark');
-
-        if (cardLight) cardLight.classList.toggle('active', current === 'light');
-        if (cardDark) cardDark.classList.toggle('active', current === 'dark');
-
-        if (badge) {
-            badge.textContent = current === 'dark' ? 'Dark Mode' : 'Light Mode';
-            badge.style.background = current === 'dark' ? 'rgba(59, 130, 246, 0.2)' : 'var(--primary-light)';
-            badge.style.color = current === 'dark' ? '#93c5fd' : 'var(--primary)';
-        }
-    }
+    setTheme() {},
+    toggleTheme() {},
+    applyTheme() {},
+    updateControls() {}
 };
 
 window.ThemeManager = ThemeManager;
@@ -190,7 +124,8 @@ const App = {
             history: 'Import Batch History',
             settings: 'System Settings & Diagnostics',
             'user-dashboard': 'Surveyor Dashboard',
-            'user-excel-files': 'Excel Files — Assigned Villages'
+            'user-excel-files': 'Excel Files — Assigned Villages',
+            'user-history': 'History'
         };
         const titleEl = document.getElementById('pageTitle');
         if (titleEl) titleEl.textContent = titles[viewName] || 'Portal';
@@ -200,6 +135,7 @@ const App = {
 
         // Load data for specific view
         if (viewName === 'dashboard') DashboardManager.load();
+        else if (viewName === 'import') ImportManager.loadBatches();
         else if (viewName === 'assign-person') PersonManager.load();
         else if (viewName === 'user-settings') UserSettingsManager.load();
         else if (viewName === 'villages') VillagesManager.load();
@@ -211,8 +147,12 @@ const App = {
             ThemeManager.updateControls();
         }
         else if (viewName === 'export') ExportManager.init();
-        else if (viewName === 'user-dashboard') UserWorkManager.loadDashboard();
+        else if (viewName === 'user-dashboard') {
+            UserWorkManager.loadDashboard();
+            UserWorkManager.loadHistory();
+        }
         else if (viewName === 'user-excel-files') UserWorkManager.loadAssignedVillages();
+        else if (viewName === 'user-history') UserWorkManager.loadHistory();
 
         // Re-render icons
         setTimeout(() => lucide.createIcons(), 50);
@@ -344,6 +284,7 @@ const App = {
         }
     }
 };
+window.App = App;
 
 /* =========================================================================
    1. DASHBOARD MANAGER (STREAMLINED FOR LARGE DATASETS)
@@ -351,20 +292,14 @@ const App = {
 const DashboardManager = {
     zoneInsights: [],
     currentZoneSort: { column: 'total_villages', dir: 'desc' },
-    activeZone: '',
-
-    async filterByZone(zone) {
-        this.activeZone = zone || '';
-        await this.load();
-    },
 
     async load() {
         try {
-            const url = this.activeZone ? `/api/dashboard/metrics?zone=${encodeURIComponent(this.activeZone)}` : '/api/dashboard/metrics';
-            const resp = await fetch(url);
+            const resp = await fetch('/api/dashboard/metrics');
             const data = await resp.json();
             if (!data.success) throw new Error(data.error);
 
+            // 1. Four Main Top KPI Cards
             const m = data.data.summary || {};
             if (document.getElementById('statTotalVillages')) {
                 document.getElementById('statTotalVillages').textContent = (m.total_villages || 0).toLocaleString();
@@ -379,6 +314,7 @@ const DashboardManager = {
                 document.getElementById('statCompleted').textContent = (m.completed_villages || 0).toLocaleString();
             }
 
+            // Overall Progress Bar
             const pct = m.progress_percentage || 0;
             if (document.getElementById('progressText')) {
                 document.getElementById('progressText').textContent = `${pct}%`;
@@ -387,50 +323,87 @@ const DashboardManager = {
                 document.getElementById('progressBar').style.width = `${Math.min(pct, 100)}%`;
             }
 
-            // Render 4 Zone Overview KPI cards
-            const zk = data.data.zone_kpis || {};
-            if (document.getElementById('zoneKpiTotalZones')) {
-                document.getElementById('zoneKpiTotalZones').textContent = (zk.total_zones || 0).toLocaleString();
-            }
-            if (document.getElementById('zoneKpiCompletedZones')) {
-                document.getElementById('zoneKpiCompletedZones').textContent = (zk.completed_zones || 0).toLocaleString();
-            }
-            if (document.getElementById('zoneKpiInProgressZones')) {
-                document.getElementById('zoneKpiInProgressZones').textContent = (zk.in_progress_zones || 0).toLocaleString();
-            }
-            if (document.getElementById('zoneKpiPendingZones')) {
-                document.getElementById('zoneKpiPendingZones').textContent = (zk.pending_zones || 0).toLocaleString();
+            // 2. Total Remaining Villages KPI Card
+            if (document.getElementById('statTotalRemaining')) {
+                document.getElementById('statTotalRemaining').textContent = (data.data.total_remaining_villages || 0).toLocaleString();
             }
 
-            // Populate / sync Dashboard Zone Filter Select options
-            const zoneSelect = document.getElementById('dashboardZoneSelect');
-            if (zoneSelect && data.data.filter_options && data.data.filter_options.zones) {
-                const currentVal = this.activeZone;
-                const zones = data.data.filter_options.zones || [];
-                const targetCount = zones.length + 1;
-                if (zoneSelect.children.length !== targetCount) {
-                    let html = '<option value="">All Zones (Overall)</option>';
-                    zones.forEach(z => {
-                        html += `<option value="${escapeQuotes(z)}" ${z === currentVal ? 'selected' : ''}>Zone: ${z}</option>`;
-                    });
-                    zoneSelect.innerHTML = html;
+            // 3. Exactly Four Zone Cards: GPIC, KPIC, VPIC, RPIC
+            const fourMap = data.data.four_zones_map || {};
+
+            // GPIC
+            const gpic = fourMap['GPIC'] || {};
+            if (document.getElementById('gpicTotal')) document.getElementById('gpicTotal').textContent = (gpic.total_villages || 0).toLocaleString();
+            if (document.getElementById('gpicPending')) document.getElementById('gpicPending').textContent = (gpic.pending_villages || 0).toLocaleString();
+            if (document.getElementById('gpicAssigned')) document.getElementById('gpicAssigned').textContent = (gpic.assigned_villages || 0).toLocaleString();
+            if (document.getElementById('gpicCompleted')) document.getElementById('gpicCompleted').textContent = (gpic.completed_villages || 0).toLocaleString();
+            const gpicPct = gpic.completion_percentage || 0;
+            if (document.getElementById('gpicProgress')) document.getElementById('gpicProgress').textContent = `${gpicPct}%`;
+            if (document.getElementById('gpicProgressBar')) document.getElementById('gpicProgressBar').style.width = `${Math.min(gpicPct, 100)}%`;
+
+            // KPIC
+            const kpic = fourMap['KPIC'] || {};
+            if (document.getElementById('kpicTotal')) document.getElementById('kpicTotal').textContent = (kpic.total_villages || 0).toLocaleString();
+            if (document.getElementById('kpicPending')) document.getElementById('kpicPending').textContent = (kpic.pending_villages || 0).toLocaleString();
+            if (document.getElementById('kpicAssigned')) document.getElementById('kpicAssigned').textContent = (kpic.assigned_villages || 0).toLocaleString();
+            if (document.getElementById('kpicCompleted')) document.getElementById('kpicCompleted').textContent = (kpic.completed_villages || 0).toLocaleString();
+            const kpicPct = kpic.completion_percentage || 0;
+            if (document.getElementById('kpicProgress')) document.getElementById('kpicProgress').textContent = `${kpicPct}%`;
+            if (document.getElementById('kpicProgressBar')) document.getElementById('kpicProgressBar').style.width = `${Math.min(kpicPct, 100)}%`;
+
+            // VPIC
+            const vpic = fourMap['VPIC'] || {};
+            if (document.getElementById('vpicTotal')) document.getElementById('vpicTotal').textContent = (vpic.total_villages || 0).toLocaleString();
+            if (document.getElementById('vpicPending')) document.getElementById('vpicPending').textContent = (vpic.pending_villages || 0).toLocaleString();
+            if (document.getElementById('vpicAssigned')) document.getElementById('vpicAssigned').textContent = (vpic.assigned_villages || 0).toLocaleString();
+            if (document.getElementById('vpicCompleted')) document.getElementById('vpicCompleted').textContent = (vpic.completed_villages || 0).toLocaleString();
+            const vpicPct = vpic.completion_percentage || 0;
+            if (document.getElementById('vpicProgress')) document.getElementById('vpicProgress').textContent = `${vpicPct}%`;
+            if (document.getElementById('vpicProgressBar')) document.getElementById('vpicProgressBar').style.width = `${Math.min(vpicPct, 100)}%`;
+
+            // RPIC
+            const rpic = fourMap['RPIC'] || {};
+            if (document.getElementById('rpicTotal')) document.getElementById('rpicTotal').textContent = (rpic.total_villages || 0).toLocaleString();
+            if (document.getElementById('rpicPending')) document.getElementById('rpicPending').textContent = (rpic.pending_villages || 0).toLocaleString();
+            if (document.getElementById('rpicAssigned')) document.getElementById('rpicAssigned').textContent = (rpic.assigned_villages || 0).toLocaleString();
+            if (document.getElementById('rpicCompleted')) document.getElementById('rpicCompleted').textContent = (rpic.completed_villages || 0).toLocaleString();
+            const rpicPct = rpic.completion_percentage || 0;
+            if (document.getElementById('rpicProgress')) document.getElementById('rpicProgress').textContent = `${rpicPct}%`;
+            if (document.getElementById('rpicProgressBar')) document.getElementById('rpicProgressBar').style.width = `${Math.min(rpicPct, 100)}%`;
+
+            // Unrecognized / Other Zones Notice
+            const otherAlert = document.getElementById('otherZoneAlertBox');
+            const other = data.data.other_zones || {};
+            if (otherAlert) {
+                if (other.total_villages > 0) {
+                    otherAlert.style.display = 'block';
+                    if (document.getElementById('otherZoneCount')) document.getElementById('otherZoneCount').textContent = (other.total_villages || 0).toLocaleString();
+                    if (document.getElementById('otherZonePending')) document.getElementById('otherZonePending').textContent = (other.pending_villages || 0).toLocaleString();
+                    if (document.getElementById('otherZoneCompleted')) document.getElementById('otherZoneCompleted').textContent = (other.completed_villages || 0).toLocaleString();
+                } else {
+                    otherAlert.style.display = 'none';
                 }
-                zoneSelect.value = currentVal;
             }
 
-            // Render live Done vs Pending Pie Chart (scoped to active zone or overall)
-            this.renderPieChart(m.completed_villages || 0, m.pending_villages || 0);
-
-            // Update zone count badge
-            const badge = document.getElementById('zoneCountBadge');
-            if (badge && data.data.zone_insights) {
-                badge.textContent = `${data.data.zone_insights.length} Zones`;
-            }
-
+            await this.loadCompletedVillages();
             lucide.createIcons();
         } catch (e) {
             console.error('Error loading dashboard:', e);
             App.toast('Failed to load dashboard metrics.', 'error');
+        }
+    },
+
+    viewDetail(statusType) {
+        App.navigate('villages');
+        if (window.VillagesManager && VillagesManager.openWithFilters) {
+            VillagesManager.openWithFilters({ zone: '', status: statusType || 'all' });
+        }
+    },
+
+    viewZoneDetail(zoneName) {
+        App.navigate('villages');
+        if (window.VillagesManager && VillagesManager.openWithFilters) {
+            VillagesManager.openWithFilters({ zone: zoneName, status: 'all' });
         }
     },
 
@@ -608,9 +581,8 @@ const DashboardManager = {
             App.charts.statusChart = null;
         }
 
-        const isDark = document.body.classList.contains('dark-theme');
-        const textColor = isDark ? '#f1f5f9' : '#0f172a';
-        const borderColor = isDark ? '#1e293b' : '#ffffff';
+        const textColor = '#0f172a';
+        const borderColor = '#ffffff';
 
         const ctx = canvas.getContext('2d');
         App.charts.statusChart = new Chart(ctx, {
@@ -676,6 +648,112 @@ const DashboardManager = {
             </tr>
         `).join('');
         lucide.createIcons();
+    },
+
+    async loadCompletedVillages() {
+        const tbody = document.getElementById('dashboardCompletedVillagesTableBody');
+        const badge = document.getElementById('dashboardCompletedCountBadge');
+        if (!tbody) return;
+
+        try {
+            const resp = await fetch('/api/dashboard/completed-villages');
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error);
+
+            const items = data.items || [];
+            if (badge) {
+                badge.textContent = `${items.length.toLocaleString()} Completed`;
+            }
+
+            if (items.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="8" style="text-align: center; color: #64748b; padding: 36px 20px;">
+                            <i data-lucide="check-circle" style="width: 36px; height: 36px; color: #94a3b8; margin-bottom: 8px; display: inline-block;"></i>
+                            <div style="font-weight: 600; font-size: 0.95rem; color: #1e293b; margin-bottom: 4px;">No Completed Villages Yet</div>
+                            <div style="font-size: 0.82rem; color: #94a3b8;">When field surveyors complete well markings and save villages, their genuine review links will appear here.</div>
+                        </td>
+                    </tr>
+                `;
+                lucide.createIcons();
+                return;
+            }
+
+            tbody.innerHTML = items.map((v, idx) => {
+                const villageName = escapeQuotes(v.village_name || '');
+                const villageCode = escapeQuotes(v.village_code || '');
+                const assignedPerson = escapeQuotes(v.assigned_person_name || 'Unassigned');
+                const completionDate = v.completion_date || '-';
+                const hasUrl = Boolean(v.generated_review_url && String(v.generated_review_url).trim().startsWith('http'));
+
+                const viewWorkBtn = `<button class="btn btn-sm btn-primary" onclick="VillagesManager.openVillageWork(${v.id}, '${escapeQuotes(v.generated_review_url || '')}', this)" style="padding: 5px 12px; font-size: 0.82rem; font-weight: 600; display: inline-flex; align-items: center; gap: 5px;" title="Open saved work on Village Wells marking portal">
+                    <i data-lucide="external-link" style="width: 14px; height: 14px;"></i> <span>View Work</span>
+                </button>`;
+
+                const reopenBtn = `<button class="btn btn-secondary btn-sm" style="color: #d97706; border-color: #fde68a; padding: 5px 10px; font-size: 0.82rem; display: inline-flex; align-items: center; gap: 4px;" onclick="VillagesManager.promptReopenVillage(${v.id}, '${villageName}', '${villageCode}', ${v.assigned_person_id || 'null'}, '${assignedPerson}')" title="Reopen &amp; Send for Correction">
+                    <i data-lucide="rotate-ccw" style="width: 13px; height: 13px;"></i> <span>Reopen</span>
+                </button>`;
+
+                const reassignBtn = `<button class="btn btn-secondary btn-sm" style="color: #4338ca; border-color: #c7d2fe; padding: 5px 9px; font-size: 0.82rem; display: inline-flex; align-items: center; gap: 4px;" onclick="VillagesManager.promptReassignVillage(${v.id}, '${villageName}', '${villageCode}', ${v.assigned_person_id || 'null'}, '${assignedPerson}')" title="Reassign to another surveyor">
+                    <i data-lucide="user-plus" style="width: 13px; height: 13px;"></i> <span>Reassign</span>
+                </button>`;
+
+                const historyBtn = `<button class="btn btn-secondary btn-sm" style="padding: 5px 8px; font-size: 0.82rem; display: inline-flex; align-items: center; gap: 3px;" onclick="VillagesManager.showAssignmentHistory(${v.id}, '${villageName}', '${villageCode}')" title="View Assignment History">
+                    <i data-lucide="history" style="width: 13px; height: 13px;"></i> <span>History</span>
+                </button>`;
+
+                return `
+                    <tr>
+                        <td style="color: #64748b; font-weight: 500;">${idx + 1}</td>
+                        <td>
+                            <strong style="color: #0f172a; font-size: 0.9rem;">${v.village_name}</strong>
+                            <div style="font-size: 0.74rem; color: #64748b;">${v.zone || '-'} &bull; ${v.district_name || '-'}</div>
+                        </td>
+                        <td>
+                            <code style="font-weight: 600; color: #1e293b; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 0.82rem;">${v.village_code || '-'}</code>
+                        </td>
+                        <td>
+                            <div style="font-weight: 600; color: #1e293b; font-size: 0.86rem; display: flex; align-items: center; gap: 4px;">
+                                <i data-lucide="user" style="width: 13px; height: 13px; color: #4f46e5;"></i>
+                                <span>${v.assigned_person_name || '<em style="color:#94a3b8; font-weight:400;">Unassigned</em>'}</span>
+                            </div>
+                        </td>
+                        <td>
+                            <span style="font-size: 0.84rem; color: #0f172a; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;">
+                                <i data-lucide="calendar" style="width: 13px; height: 13px; color: #059669;"></i>
+                                ${completionDate}
+                            </span>
+                        </td>
+                        <td>
+                            <div style="font-size: 0.84rem; color: #0f172a; font-weight: 700;">Total: ${v.total_wells || 0} wells</div>
+                            <div style="font-size: 0.74rem; color: #64748b;">Dug Wells: <strong>${v.dugwells || 0}</strong> &bull; Borewells: <strong>${v.bores || 0}</strong></div>
+                        </td>
+                        <td>
+                            <span class="badge" style="background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;">
+                                <i data-lucide="check-circle-2" style="width: 12px; height: 12px;"></i> Completed
+                            </span>
+                        </td>
+                        <td style="text-align: right; white-space: nowrap;">
+                            <div style="display: inline-flex; gap: 5px; align-items: center; justify-content: flex-end;">
+                                ${viewWorkBtn}
+                                ${reopenBtn}
+                                ${reassignBtn}
+                                ${historyBtn}
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            lucide.createIcons();
+        } catch (err) {
+            console.error('Error loading dashboard completed villages:', err);
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #ef4444; padding: 24px;">Failed to load completed villages: ${err.message}</td></tr>`;
+        }
+    },
+
+    warnMissingReviewLink(villageName, villageCode) {
+        App.toast(`Warning: No genuine review URL recorded in database for village "${villageName}" (${villageCode}). Generating fake URLs is strictly prohibited.`, 'warning');
     }
 };
 
@@ -685,6 +763,14 @@ const DashboardManager = {
 const ImportManager = {
     selectedFile: null,
     previewData: null,
+    batches: [],
+    currentBatchId: null,
+    currentBatchVillages: [],
+    batchVillagesPage: 1,
+    batchVillagesTotalPages: 1,
+    batchVillagesPageSize: 20,
+    correctionFile: null,
+    searchDebounceTimer: null,
 
     init() {
         const dropzone = document.getElementById('excelDropzone');
@@ -718,6 +804,651 @@ const ImportManager = {
         if (resetBtn) {
             resetBtn.addEventListener('click', () => this.reset());
         }
+
+        // Batch Review Table search/filters
+        const batchSearchInput = document.getElementById('batchVillageSearchInput');
+        if (batchSearchInput) {
+            batchSearchInput.addEventListener('input', () => {
+                clearTimeout(this.searchDebounceTimer);
+                this.searchDebounceTimer = setTimeout(() => this.loadBatchVillages(1), 350);
+            });
+        }
+
+        const batchDistFilter = document.getElementById('batchDistrictFilter');
+        if (batchDistFilter) {
+            batchDistFilter.addEventListener('input', () => {
+                clearTimeout(this.searchDebounceTimer);
+                this.searchDebounceTimer = setTimeout(() => this.loadBatchVillages(1), 350);
+            });
+        }
+
+        const batchTalukaFilter = document.getElementById('batchTalukaFilter');
+        if (batchTalukaFilter) {
+            batchTalukaFilter.addEventListener('input', () => {
+                clearTimeout(this.searchDebounceTimer);
+                this.searchDebounceTimer = setTimeout(() => this.loadBatchVillages(1), 350);
+            });
+        }
+
+        // Batch correction dropzone
+        const correctDropzone = document.getElementById('batchCorrectDropzone');
+        if (correctDropzone) {
+            correctDropzone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                correctDropzone.classList.add('drag-over');
+            });
+            correctDropzone.addEventListener('dragleave', () => correctDropzone.classList.remove('drag-over'));
+            correctDropzone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                correctDropzone.classList.remove('drag-over');
+                if (e.dataTransfer.files.length) {
+                    this.handleCorrectionFileSelected(e.dataTransfer.files[0]);
+                }
+            });
+        }
+
+        // Load batches if on view-import or initial load
+        this.loadBatches();
+    },
+
+    async loadBatches() {
+        const container = document.getElementById('batchesContainer');
+        if (!container) return;
+
+        try {
+            const resp = await fetch('/api/import/batches');
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error);
+
+            this.batches = data.batches || [];
+            this.renderBatches(this.batches);
+        } catch (e) {
+            console.error('Failed to load import batches:', e);
+            if (container) {
+                container.innerHTML = `
+                    <div style="grid-column: 1 / -1; text-align: center; padding: 24px; color: #ef4444;">
+                        Failed to load imported batches: ${e.message}
+                    </div>
+                `;
+            }
+        }
+    },
+
+    renderBatches(batches) {
+        const container = document.getElementById('batchesContainer');
+        if (!container) return;
+
+        if (!batches || batches.length === 0) {
+            container.innerHTML = `
+                <div style="grid-column: 1 / -1; text-align: center; padding: 36px 16px; background: var(--bg-surface); border: 1px dashed var(--border-color); border-radius: 8px;">
+                    <i data-lucide="file-spreadsheet" style="width: 38px; height: 38px; color: var(--text-secondary); margin-bottom: 8px;"></i>
+                    <h4 style="font-size: 0.95rem; font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">No Imported Datasets Yet</h4>
+                    <p style="font-size: 0.82rem; color: var(--text-secondary); margin: 0;">Upload an Excel or CSV file using the box above to import village datasets.</p>
+                </div>
+            `;
+            if (window.lucide) lucide.createIcons();
+            return;
+        }
+
+        const formatDt = (dtStr) => {
+            if (!dtStr) return 'N/A';
+            try {
+                const d = new Date(dtStr);
+                return d.toLocaleString(undefined, {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            } catch {
+                return dtStr;
+            }
+        };
+
+        container.innerHTML = batches.map(b => {
+            const addedCount = b.inserted_rows || b.valid_rows || 0;
+            const updatedCount = b.updated_rows || 0;
+            const dupsCount = b.duplicate_rows || 0;
+            const invalidCount = b.invalid_rows || 0;
+            const totalCount = b.total_rows || 0;
+            const activeInDb = b.active_villages_count || 0;
+            const assignedCount = b.assigned_count || 0;
+            const completedCount = b.completed_count || 0;
+
+            return `
+            <div class="card batch-card" style="border: 1px solid var(--border-color); border-radius: 10px; padding: 18px; background: var(--bg-card); display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 2px 6px rgba(0,0,0,0.03); position: relative;">
+                <div>
+                    <!-- Header -->
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 12px;">
+                        <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+                            <div style="width: 40px; height: 40px; border-radius: 8px; background: rgba(37, 99, 235, 0.1); color: var(--primary); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                                <i data-lucide="file-spreadsheet" style="width: 22px; height: 22px;"></i>
+                            </div>
+                            <div style="min-width: 0;">
+                                <h4 style="font-size: 0.96rem; font-weight: 700; margin: 0; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${b.filename}">
+                                    ${b.filename}
+                                </h4>
+                                <div style="font-size: 0.77rem; color: var(--text-secondary); margin-top: 2px;">
+                                    <i data-lucide="clock" style="width: 12px; height: 12px; vertical-align: middle; margin-right: 2px;"></i>
+                                    ${formatDt(b.created_at)}
+                                </div>
+                            </div>
+                        </div>
+                        <span class="badge ${b.status === 'completed' ? 'badge-success' : 'badge-warning'}" style="font-size: 0.72rem; text-transform: uppercase;">
+                            ${b.status || 'Completed'}
+                        </span>
+                    </div>
+
+                    <!-- Metric Box -->
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 12px; background: var(--bg-surface); padding: 12px; border-radius: 8px; border: 1px solid var(--border-color);">
+                        <div>
+                            <div style="font-size: 0.72rem; color: var(--text-secondary); font-weight: 600;">Total Villages</div>
+                            <div style="font-size: 1.15rem; font-weight: 700; color: var(--text-primary);">${totalCount.toLocaleString()}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.72rem; color: #166534; font-weight: 600;">Successfully Added</div>
+                            <div style="font-size: 1.15rem; font-weight: 700; color: #166534;">${addedCount.toLocaleString()}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.72rem; color: #2563eb; font-weight: 600;">Updated Existing</div>
+                            <div style="font-size: 1.15rem; font-weight: 700; color: #2563eb;">${updatedCount.toLocaleString()}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.72rem; color: #d97706; font-weight: 600;">Duplicates / Skipped</div>
+                            <div style="font-size: 1.15rem; font-weight: 700; color: #d97706;">${dupsCount.toLocaleString()}</div>
+                        </div>
+                        ${invalidCount > 0 ? `
+                        <div style="grid-column: span 2; display: flex; justify-content: space-between; align-items: center; background: #fef2f2; padding: 6px 10px; border-radius: 6px; border: 1px solid #fecaca;">
+                            <span style="font-size: 0.78rem; color: #dc2626; font-weight: 600;">Failed Records: ${invalidCount}</span>
+                            ${b.error_report_name ? `<a href="/api/import/errors/${b.error_report_name}" class="btn btn-xs btn-outline-danger" style="font-size: 0.72rem; padding: 2px 8px;">Download Errors</a>` : ''}
+                        </div>` : ''}
+                    </div>
+
+                    <!-- DB Status Badges -->
+                    <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; font-size: 0.75rem;">
+                        <span style="background: rgba(37, 99, 235, 0.08); color: var(--primary); padding: 3px 8px; border-radius: 4px; font-weight: 600;">
+                            Active in DB: ${activeInDb.toLocaleString()}
+                        </span>
+                        ${assignedCount > 0 ? `<span style="background: rgba(99, 102, 241, 0.1); color: #4f46e5; padding: 3px 8px; border-radius: 4px; font-weight: 600;">Assigned: ${assignedCount.toLocaleString()}</span>` : ''}
+                        ${completedCount > 0 ? `<span style="background: rgba(16, 185, 129, 0.1); color: #059669; padding: 3px 8px; border-radius: 4px; font-weight: 600;">Completed: ${completedCount.toLocaleString()}</span>` : ''}
+                    </div>
+                </div>
+
+                <!-- Actions Footer -->
+                <div style="display: flex; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 12px; justify-content: flex-end; align-items: center;">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="ImportManager.openReviewModal(${b.id})" title="Review villages in this batch" style="display: flex; align-items: center; gap: 5px; font-size: 0.8rem;">
+                        <i data-lucide="list" style="width: 14px; height: 14px;"></i>
+                        <span>Review</span>
+                    </button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="ImportManager.openEditModal(${b.id}, 'upload')" title="Upload corrected sheet or update village details" style="display: flex; align-items: center; gap: 5px; font-size: 0.8rem;">
+                        <i data-lucide="edit-3" style="width: 14px; height: 14px;"></i>
+                        <span>Edit</span>
+                    </button>
+                    <button type="button" class="btn btn-danger btn-sm" onclick="ImportManager.openDeleteModal(${b.id})" title="Delete this batch dataset" style="display: flex; align-items: center; gap: 5px; font-size: 0.8rem;">
+                        <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+                        <span>Delete</span>
+                    </button>
+                </div>
+            </div>
+            `;
+        }).join('');
+
+        if (window.lucide) lucide.createIcons();
+    },
+
+    openReviewModal(batchId) {
+        this.openEditModal(batchId, 'review');
+    },
+
+    openEditModal(batchId, tab = 'upload') {
+        const numId = parseInt(batchId, 10);
+        let batch = this.batches.find(b => b.id == batchId || b.id == numId);
+        if (!batch) {
+            batch = { id: batchId, filename: `Dataset #${batchId}`, total_rows: 0, active_villages_count: 0 };
+        }
+
+        this.currentBatchId = batch.id;
+        this.correctionFile = null;
+
+        const titleEl = document.getElementById('editBatchTitleFileName');
+        if (titleEl) titleEl.textContent = batch.filename || `Dataset #${batch.id}`;
+
+        const subEl = document.getElementById('editBatchMetaSubtitle');
+        if (subEl) {
+            const totalR = batch.total_rows || 0;
+            const activeV = batch.active_villages_count !== undefined ? batch.active_villages_count : 0;
+            subEl.textContent = `Batch #${batch.id} • Total Rows: ${totalR.toLocaleString()} • Active in DB: ${activeV.toLocaleString()}`;
+        }
+
+        // Reset inputs
+        const correctInput = document.getElementById('batchCorrectFileInput');
+        if (correctInput) correctInput.value = '';
+        const infoBox = document.getElementById('batchCorrectFileInfo');
+        if (infoBox) infoBox.style.display = 'none';
+
+        this.switchEditTab(tab);
+        if (tab === 'review') {
+            this.resetBatchFilters();
+        }
+
+        App.openModal('editBatchModal');
+        if (window.lucide) lucide.createIcons();
+    },
+
+    switchEditTab(tabName) {
+        const tabReview = document.getElementById('tabContentReview');
+        const tabUpload = document.getElementById('tabContentUpload');
+        const btnReview = document.getElementById('tabBtnReviewVillages');
+        const btnUpload = document.getElementById('tabBtnUploadCorrection');
+
+        if (tabName === 'review') {
+            if (tabReview) tabReview.style.display = 'flex';
+            if (tabUpload) tabUpload.style.display = 'none';
+            if (btnReview) {
+                btnReview.className = 'btn btn-sm btn-primary';
+            }
+            if (btnUpload) {
+                btnUpload.className = 'btn btn-sm btn-outline';
+            }
+        } else {
+            if (tabReview) tabReview.style.display = 'none';
+            if (tabUpload) tabUpload.style.display = 'block';
+            if (btnReview) {
+                btnReview.className = 'btn btn-sm btn-outline';
+            }
+            if (btnUpload) {
+                btnUpload.className = 'btn btn-sm btn-primary';
+            }
+        }
+        if (window.lucide) lucide.createIcons();
+    },
+
+    resetBatchFilters() {
+        const s = document.getElementById('batchVillageSearchInput');
+        if (s) s.value = '';
+        const d = document.getElementById('batchDistrictFilter');
+        if (d) d.value = '';
+        const t = document.getElementById('batchTalukaFilter');
+        if (t) t.value = '';
+        this.loadBatchVillages(1);
+    },
+
+    async loadBatchVillages(page = 1) {
+        if (!this.currentBatchId) return;
+
+        this.batchVillagesPage = page;
+        const tbody = document.getElementById('batchVillagesTableBody');
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; padding: 24px; color: var(--text-secondary);"><div class="spinner" style="margin: 0 auto 8px auto;"></div>Loading villages...</td></tr>`;
+        }
+
+        const search = document.getElementById('batchVillageSearchInput')?.value.trim() || '';
+        const district = document.getElementById('batchDistrictFilter')?.value.trim() || '';
+        const taluka = document.getElementById('batchTalukaFilter')?.value.trim() || '';
+
+        try {
+            const url = `/api/import/batch/${this.currentBatchId}/villages?page=${page}&page_size=${this.batchVillagesPageSize}&search=${encodeURIComponent(search)}&district=${encodeURIComponent(district)}&taluka=${encodeURIComponent(taluka)}`;
+            const resp = await fetch(url);
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error);
+
+            const result = data.data;
+            this.currentBatchVillages = result.items || [];
+            this.batchVillagesTotalPages = result.total_pages || 1;
+
+            this.renderBatchVillages(result);
+        } catch (e) {
+            if (tbody) {
+                tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; padding: 20px; color: #ef4444;">Failed to load villages: ${e.message}</td></tr>`;
+            }
+        }
+    },
+
+    renderBatchVillages(result) {
+        const tbody = document.getElementById('batchVillagesTableBody');
+        const countSummary = document.getElementById('batchVillagesCountSummary');
+        const paginationInfo = document.getElementById('batchPaginationInfo');
+        const prevBtn = document.getElementById('btnBatchPrevPage');
+        const nextBtn = document.getElementById('btnBatchNextPage');
+
+        const items = result.items || [];
+        const total = result.total_count || 0;
+        const page = result.current_page || 1;
+        const pageSize = result.page_size || 20;
+
+        const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+        const to = Math.min(page * pageSize, total);
+
+        if (countSummary) {
+            countSummary.textContent = `Showing ${from.toLocaleString()} - ${to.toLocaleString()} of ${total.toLocaleString()} villages in this batch`;
+        }
+
+        if (paginationInfo) {
+            paginationInfo.textContent = `Page ${page} of ${result.total_pages || 1}`;
+        }
+
+        if (prevBtn) prevBtn.disabled = (page <= 1);
+        if (nextBtn) nextBtn.disabled = (page >= result.total_pages);
+
+        if (items.length === 0) {
+            if (tbody) tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; padding: 24px; color: var(--text-secondary);">No villages matched the filter in this batch.</td></tr>`;
+            return;
+        }
+
+        if (tbody) {
+            tbody.innerHTML = items.map(v => {
+                const isDone = (v.work_status === 'Done' || ['Done', 'Verified', 'Marking Completed', 'Finalized'].includes(v.kml_status));
+                const wellsBreakdown = `${v.electric_kuva || 0} / ${v.electric_bor || 0} / ${v.solar_bor_kuva || 0}`;
+                return `
+                <tr>
+                    <td><code style="font-weight: 600; color: var(--primary);">${v.village_code}</code></td>
+                    <td><strong>${v.village_name}</strong></td>
+                    <td>${v.district_name}</td>
+                    <td>${v.subdistrict_name}</td>
+                    <td>${v.zone || '-'}</td>
+                    <td>${v.geb_connection || '-'}</td>
+                    <td style="text-align: center;" title="Kuva / Bor / Solar">${wellsBreakdown}</td>
+                    <td style="text-align: center; font-weight: 700;">${v.total_wells || 0}</td>
+                    <td style="text-align: center;">
+                        <span class="badge ${isDone ? 'badge-success' : 'badge-neutral'}" style="font-size: 0.72rem;">
+                            ${isDone ? 'Completed' : 'Pending'}
+                        </span>
+                    </td>
+                    <td style="text-align: center;">
+                        <button type="button" class="btn btn-outline btn-xs" onclick="ImportManager.openQuickEditVillage(${v.id})" title="Edit village details" style="padding: 3px 8px; font-size: 0.74rem;">
+                            <i data-lucide="edit-2" style="width: 12px; height: 12px;"></i>
+                            <span>Edit</span>
+                        </button>
+                    </td>
+                </tr>
+                `;
+            }).join('');
+        }
+
+        if (window.lucide) lucide.createIcons();
+    },
+
+    changeBatchPage(delta) {
+        const newPage = this.batchVillagesPage + delta;
+        if (newPage >= 1 && newPage <= this.batchVillagesTotalPages) {
+            this.loadBatchVillages(newPage);
+        }
+    },
+
+    openQuickEditVillage(villageId) {
+        const v = this.currentBatchVillages.find(x => x.id == villageId);
+        if (!v) return;
+
+        document.getElementById('quickEditVillageId').value = v.id;
+        document.getElementById('quickEditVillageCode').textContent = v.village_code;
+        document.getElementById('quickEditVillageName').value = v.village_name || '';
+        document.getElementById('quickEditDistrictName').value = v.district_name || '';
+        document.getElementById('quickEditSubdistrictName').value = v.subdistrict_name || '';
+        document.getElementById('quickEditZone').value = v.zone || '';
+        document.getElementById('quickEditGeb').value = v.geb_connection || '';
+        document.getElementById('quickEditElectricKuva').value = v.electric_kuva || 0;
+        document.getElementById('quickEditElectricBor').value = v.electric_bor || 0;
+        document.getElementById('quickEditSolarBorKuva').value = v.solar_bor_kuva || 0;
+        document.getElementById('quickEditTotalWells').value = v.total_wells || 0;
+        document.getElementById('quickEditRemark').value = v.remark || '';
+
+        App.openModal('quickEditVillageModal');
+        if (window.lucide) lucide.createIcons();
+    },
+
+    calcQuickEditWells() {
+        const kuva = parseInt(document.getElementById('quickEditElectricKuva')?.value) || 0;
+        const bor = parseInt(document.getElementById('quickEditElectricBor')?.value) || 0;
+        const solar = parseInt(document.getElementById('quickEditSolarBorKuva')?.value) || 0;
+        const total = kuva + bor + solar;
+        const totalEl = document.getElementById('quickEditTotalWells');
+        if (totalEl) totalEl.value = total;
+    },
+
+    async saveQuickEditVillage(e) {
+        e.preventDefault();
+        const villageId = document.getElementById('quickEditVillageId')?.value;
+        if (!villageId || !this.currentBatchId) return;
+
+        const btn = document.getElementById('btnSaveQuickEditVillage');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span>Saving...</span>';
+        }
+
+        const payload = {
+            village_id: parseInt(villageId),
+            village_name: document.getElementById('quickEditVillageName').value.trim(),
+            district_name: document.getElementById('quickEditDistrictName').value.trim(),
+            subdistrict_name: document.getElementById('quickEditSubdistrictName').value.trim(),
+            zone: document.getElementById('quickEditZone').value.trim(),
+            geb_connection: document.getElementById('quickEditGeb').value.trim(),
+            electric_kuva: parseInt(document.getElementById('quickEditElectricKuva').value) || 0,
+            electric_bor: parseInt(document.getElementById('quickEditElectricBor').value) || 0,
+            solar_bor_kuva: parseInt(document.getElementById('quickEditSolarBorKuva').value) || 0,
+            total_wells: parseInt(document.getElementById('quickEditTotalWells').value) || 0,
+            remark: document.getElementById('quickEditRemark').value.trim()
+        };
+
+        try {
+            const resp = await fetch(`/api/import/batch/${this.currentBatchId}/update-village`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error);
+
+            App.toast('Village updated successfully!', 'success');
+            App.closeModal('quickEditVillageModal');
+            this.loadBatchVillages(this.batchVillagesPage);
+            DashboardManager.load();
+        } catch (err) {
+            App.toast(`Failed to update village: ${err.message}`, 'error');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i data-lucide="check"></i><span>Save Changes</span>';
+                if (window.lucide) lucide.createIcons();
+            }
+        }
+    },
+
+    handleCorrectionFileSelected(file) {
+        if (!file) return;
+        this.correctionFile = file;
+        const infoBox = document.getElementById('batchCorrectFileInfo');
+        const nameEl = document.getElementById('batchCorrectSelectedName');
+        if (infoBox && nameEl) {
+            infoBox.style.display = 'flex';
+            nameEl.textContent = file.name;
+        }
+    },
+
+    async submitBatchCorrection() {
+        if (!this.correctionFile || !this.currentBatchId) {
+            App.toast('Please select an Excel or CSV file first.', 'warning');
+            return;
+        }
+
+        const btn = document.getElementById('btnSubmitBatchCorrection');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span>Updating batch records...</span>';
+        }
+
+        const formData = new FormData();
+        formData.append('file', this.correctionFile);
+
+        try {
+            const resp = await fetch(`/api/import/batch/${this.currentBatchId}/correct`, {
+                method: 'POST',
+                body: formData
+            });
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error);
+
+            const res = data.result;
+            App.toast(`Batch updated: ${res.updated_count} villages updated, ${res.inserted_count} added.`, 'success');
+
+            // Reset and switch to review tab
+            this.correctionFile = null;
+            document.getElementById('batchCorrectFileInput').value = '';
+            document.getElementById('batchCorrectFileInfo').style.display = 'none';
+
+            this.switchEditTab('review');
+            this.loadBatches();
+            this.loadBatchVillages(1);
+            DashboardManager.load();
+            if (typeof PersonManager !== 'undefined') PersonManager.load();
+        } catch (err) {
+            App.toast(`Batch correction error: ${err.message}`, 'error');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i data-lucide="check"></i><span>Apply Corrections & Update</span>';
+                if (window.lucide) lucide.createIcons();
+            }
+        }
+    },
+
+    async openDeleteModal(batchId) {
+        const numId = parseInt(batchId, 10);
+        let batch = this.batches.find(b => b.id == batchId || b.id == numId);
+        if (!batch) {
+            batch = { id: batchId, filename: `Dataset #${batchId}`, total_rows: 0, active_villages_count: 0 };
+        }
+
+        this.currentBatchId = batch.id;
+        const deleteIdInput = document.getElementById('deleteBatchId');
+        if (deleteIdInput) deleteIdInput.value = batch.id;
+
+        const countEl = document.getElementById('deleteBatchCount');
+        const count = batch.active_villages_count !== undefined ? batch.active_villages_count : (batch.total_rows || 0);
+        if (countEl) countEl.textContent = Number(count).toLocaleString();
+
+        const fileEl = document.getElementById('deleteBatchFileText');
+        if (fileEl) {
+            fileEl.textContent = `File: ${batch.filename} • Batch ID #${batch.id}`;
+        }
+
+        const warningBanner = document.getElementById('deleteBatchWarningBanner');
+        const warningDetails = document.getElementById('deleteBatchWarningDetails');
+        const confirmCheckbox = document.getElementById('deleteBatchConfirmCheckbox');
+        const deleteBtn = document.getElementById('btnConfirmDeleteBatch');
+        const deleteBtnText = document.getElementById('btnConfirmDeleteBatchText');
+
+        // Reset button and state immediately
+        if (deleteBtn) deleteBtn.disabled = false;
+        if (deleteBtnText) deleteBtnText.textContent = 'Delete Dataset';
+        if (warningBanner) warningBanner.style.display = 'none';
+        if (confirmCheckbox) confirmCheckbox.checked = true;
+
+        // Open confirmation modal immediately so the user gets instant visual feedback
+        App.openModal('deleteBatchModal');
+        if (window.lucide) lucide.createIcons();
+
+        // Check safety asynchronously
+        try {
+            const resp = await fetch(`/api/import/batch/${batch.id}/check-delete`);
+            const data = await resp.json();
+            const safety = data.safety || {};
+
+            if (safety.total_villages !== undefined && countEl) {
+                countEl.textContent = Number(safety.total_villages).toLocaleString();
+            }
+
+            if (!safety.is_safe && (safety.assigned_villages > 0 || safety.completed_villages > 0)) {
+                if (warningBanner) warningBanner.style.display = 'block';
+                if (warningDetails) {
+                    warningDetails.innerHTML = `This dataset contains <strong>${safety.assigned_villages} assigned</strong> and <strong>${safety.completed_villages} completed/marked</strong> villages. Deleting will permanently remove this surveyor progress!`;
+                }
+                if (confirmCheckbox) confirmCheckbox.checked = false;
+                if (deleteBtn) deleteBtn.disabled = true;
+            } else {
+                if (warningBanner) warningBanner.style.display = 'none';
+                if (confirmCheckbox) confirmCheckbox.checked = true;
+                if (deleteBtn) deleteBtn.disabled = false;
+            }
+            if (window.lucide) lucide.createIcons();
+        } catch (e) {
+            console.warn('Safety check notice:', e);
+            if (warningBanner) warningBanner.style.display = 'none';
+            if (deleteBtn) deleteBtn.disabled = false;
+        }
+    },
+
+    toggleDeleteConfirm() {
+        const cb = document.getElementById('deleteBatchConfirmCheckbox');
+        const btn = document.getElementById('btnConfirmDeleteBatch');
+        if (btn && cb) {
+            btn.disabled = !cb.checked;
+        }
+    },
+
+    async executeDeleteBatch() {
+        if (!this.currentBatchId) {
+            App.toast('No dataset selected for deletion.', 'warning');
+            return;
+        }
+
+        const warningBanner = document.getElementById('deleteBatchWarningBanner');
+        const isWarningVisible = warningBanner && warningBanner.style.display !== 'none';
+        const confirmCheckbox = document.getElementById('deleteBatchConfirmCheckbox');
+
+        if (isWarningVisible && (!confirmCheckbox || !confirmCheckbox.checked)) {
+            App.toast('Please check the confirmation box to confirm removing active surveyor work.', 'warning');
+            return;
+        }
+
+        const btn = document.getElementById('btnConfirmDeleteBatch');
+        const btnText = document.getElementById('btnConfirmDeleteBatchText');
+        if (btn) btn.disabled = true;
+        if (btnText) btnText.textContent = 'Deleting dataset...';
+
+        try {
+            const resp = await fetch(`/api/import/batch/${this.currentBatchId}/delete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ force: isWarningVisible ? confirmCheckbox.checked : true })
+            });
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error || data.warning || 'Failed to delete dataset.');
+
+            const deletedCount = data.deleted_villages !== undefined ? Number(data.deleted_villages) : 0;
+            const protectedCount = data.protected_villages !== undefined ? Number(data.protected_villages) : 0;
+            let successMsg = `Dataset "${data.filename || ''}" deleted successfully.`;
+            if (deletedCount > 0 && protectedCount > 0) {
+                successMsg += ` (${deletedCount.toLocaleString()} villages removed, ${protectedCount.toLocaleString()} active/completed villages protected).`;
+            } else if (deletedCount > 0) {
+                successMsg += ` (${deletedCount.toLocaleString()} active villages removed).`;
+            } else if (protectedCount > 0) {
+                successMsg += ` (${protectedCount.toLocaleString()} active villages preserved).`;
+            }
+
+            App.toast(successMsg, 'success');
+            App.closeModal('deleteBatchModal');
+            this.currentBatchId = null;
+
+            // Immediate reactive update of all dependent UI
+            await this.loadBatches();
+            if (typeof DashboardManager !== 'undefined' && DashboardManager.load) {
+                DashboardManager.load();
+            }
+            if (typeof PersonManager !== 'undefined' && PersonManager.load) {
+                PersonManager.load();
+            }
+            if (typeof VillagesManager !== 'undefined' && VillagesManager.load) {
+                VillagesManager.load();
+            }
+        } catch (err) {
+            App.toast(`Failed to delete dataset: ${err.message}`, 'error');
+        } finally {
+            if (btn) btn.disabled = false;
+            if (btnText) btnText.textContent = 'Delete Dataset';
+            if (window.lucide) lucide.createIcons();
+        }
     },
 
     async handleFile(file) {
@@ -750,7 +1481,6 @@ const ImportManager = {
         document.getElementById('previewFileName').textContent = preview.filename;
         document.getElementById('previewRowCount').textContent = `Detected ~${preview.total_estimated_rows} rows`;
 
-        // Canonical fields target list
         const canonicalOptions = [
             { id: 'zone', label: 'Zone' },
             { id: 'district_name', label: 'District Name *' },
@@ -767,7 +1497,6 @@ const ImportManager = {
             { id: 'remark', label: 'Remark' }
         ];
 
-        // Render Column Mapping Controls
         const grid = document.getElementById('columnMappingGrid');
         grid.innerHTML = preview.headers.map(header => {
             const suggested = preview.suggested_mappings[header] || '';
@@ -790,7 +1519,6 @@ const ImportManager = {
             `;
         }).join('');
 
-        // Render Sample Table
         const thead = document.getElementById('previewTableHead');
         const tbody = document.getElementById('previewTableBody');
 
@@ -805,7 +1533,6 @@ const ImportManager = {
     async executeImport() {
         if (!this.selectedFile) return;
 
-        // Gather column mappings
         const mappings = {};
         document.querySelectorAll('.mapping-select').forEach(sel => {
             const actual = sel.getAttribute('data-actual-header');
@@ -817,7 +1544,7 @@ const ImportManager = {
 
         const btn = document.getElementById('startImportBtn');
         btn.disabled = true;
-        btn.innerHTML = '<span>Importing data...</span>';
+        btn.innerHTML = '<span>Importing dataset...</span>';
 
         const formData = new FormData();
         formData.append('file', this.selectedFile);
@@ -834,6 +1561,9 @@ const ImportManager = {
 
             this.showResult(data.result);
             App.toast('Batch import successfully completed!', 'success');
+
+            // Immediately refresh batches, dashboard, person managers
+            this.loadBatches();
             DashboardManager.load();
             if (typeof PersonManager !== 'undefined') {
                 PersonManager.load();
@@ -851,11 +1581,11 @@ const ImportManager = {
         const card = document.getElementById('importResultCard');
         card.style.display = 'block';
 
-        document.getElementById('resTotal').textContent = res.total_rows;
-        document.getElementById('resInserted').textContent = res.inserted_count;
-        document.getElementById('resUpdated').textContent = res.updated_count;
-        document.getElementById('resDuplicates').textContent = res.duplicates_detected;
-        document.getElementById('resInvalid').textContent = res.invalid_rows;
+        document.getElementById('resTotal').textContent = (res.total_rows || 0).toLocaleString();
+        document.getElementById('resInserted').textContent = (res.inserted_count || 0).toLocaleString();
+        document.getElementById('resUpdated').textContent = (res.updated_count || 0).toLocaleString();
+        document.getElementById('resDuplicates').textContent = (res.duplicates_detected || 0).toLocaleString();
+        document.getElementById('resInvalid').textContent = (res.invalid_rows || 0).toLocaleString();
 
         const errContainer = document.getElementById('errorDownloadContainer');
         const errLink = document.getElementById('errorReportLink');
@@ -881,6 +1611,7 @@ const ImportManager = {
         }
     }
 };
+window.ImportManager = ImportManager;
 
 /* =========================================================================
    3. ALL VILLAGES MANAGER
@@ -891,6 +1622,8 @@ const VillagesManager = {
     selectedIds: new Set(),
     sortBy: 'district_name',
     sortDir: 'asc',
+    currentZone: '',
+    currentStatus: 'all',
 
     init() {
         const searchInput = document.getElementById('villageSearchInput');
@@ -905,7 +1638,18 @@ const VillagesManager = {
             });
         }
 
-        ['filterDistrict', 'filterSubdistrict', 'filterZone', 'filterStatus'].forEach(id => {
+        const zoneSelect = document.getElementById('filterZone');
+        if (zoneSelect) {
+            zoneSelect.addEventListener('change', (e) => {
+                this.currentZone = e.target.value;
+                this.currentPage = 1;
+                this.updateScopeHeader();
+                this.loadScopeMetrics();
+                this.load();
+            });
+        }
+
+        ['filterDistrict', 'filterSubdistrict', 'filterAssignedPerson'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.addEventListener('change', () => {
                 this.currentPage = 1;
@@ -913,16 +1657,44 @@ const VillagesManager = {
             });
         });
 
+        const statusSelect = document.getElementById('filterStatus');
+        if (statusSelect) {
+            statusSelect.addEventListener('change', (e) => {
+                const val = e.target.value;
+                const tab = val || 'all';
+                this.currentStatus = tab;
+                ['all', 'pending', 'assigned', 'completed'].forEach(t => {
+                    const btn = document.getElementById(`pillStatus${t.charAt(0).toUpperCase() + t.slice(1)}`);
+                    if (btn) {
+                        if (t === tab) btn.classList.add('active');
+                        else btn.classList.remove('active');
+                    }
+                });
+                this.currentPage = 1;
+                this.load();
+            });
+        }
+
         const resetBtn = document.getElementById('resetFiltersBtn');
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
-                document.getElementById('villageSearchInput').value = '';
-                document.getElementById('filterDistrict').value = '';
-                document.getElementById('filterSubdistrict').value = '';
-                document.getElementById('filterZone').value = '';
-                document.getElementById('filterStatus').value = '';
-                this.currentPage = 1;
-                this.load();
+                const sIn = document.getElementById('villageSearchInput');
+                if (sIn) sIn.value = '';
+                const fD = document.getElementById('filterDistrict');
+                if (fD) fD.value = '';
+                const fS = document.getElementById('filterSubdistrict');
+                if (fS) fS.value = '';
+                const fP = document.getElementById('filterAssignedPerson');
+                if (fP) fP.value = '';
+                const fZ = document.getElementById('filterZone');
+                if (fZ) fZ.value = '';
+                const fSt = document.getElementById('filterStatus');
+                if (fSt) fSt.value = '';
+
+                this.currentZone = '';
+                this.currentStatus = 'all';
+                this.setStatusTab('all');
+                this.loadScopeMetrics();
             });
         }
 
@@ -972,6 +1744,142 @@ const VillagesManager = {
         this.loadFilters();
     },
 
+    updateScopeHeader() {
+        const titleEl = document.getElementById('villagesViewTitle');
+        const subtitleEl = document.getElementById('villagesViewSubtitle');
+        const zone = this.currentZone;
+        const status = this.currentStatus;
+
+        if (zone) {
+            if (titleEl) titleEl.innerHTML = `<i data-lucide="layers" style="color: #2563eb;"></i> <span>Zone: ${escapeQuotes(zone)} — Village Records</span>`;
+            if (subtitleEl) subtitleEl.textContent = `Displaying village records, live status, and metrics scoped to ${zone} zone.`;
+        } else if (status === 'pending') {
+            if (titleEl) titleEl.innerHTML = `<i data-lucide="clock" style="color: #d97706;"></i> <span>Pending Villages — Work Incomplete</span>`;
+            if (subtitleEl) subtitleEl.textContent = `All active villages across all zones where marking or verification is still pending.`;
+        } else if (status === 'completed') {
+            if (titleEl) titleEl.innerHTML = `<i data-lucide="check-circle-2" style="color: #059669;"></i> <span>Completed Villages — Verified &amp; Done</span>`;
+            if (subtitleEl) subtitleEl.textContent = `All active villages across all zones with work status completed and verified.`;
+        } else if (status === 'assigned') {
+            if (titleEl) titleEl.innerHTML = `<i data-lucide="user-check" style="color: #4f46e5;"></i> <span>Assigned Villages — Allocated</span>`;
+            if (subtitleEl) subtitleEl.textContent = `All villages currently allocated to field surveyors and staff.`;
+        } else {
+            if (titleEl) titleEl.innerHTML = `<i data-lucide="database" style="color: #2563eb;"></i> <span>All Village Records &amp; Intelligence</span>`;
+            if (subtitleEl) subtitleEl.textContent = `Complete database records with live search, filters, pagination, and assignment status.`;
+        }
+        lucide.createIcons();
+    },
+
+    async loadScopeMetrics() {
+        try {
+            const url = this.currentZone 
+                ? `/api/dashboard/metrics?zone=${encodeURIComponent(this.currentZone)}`
+                : '/api/dashboard/metrics';
+            const resp = await fetch(url);
+            const data = await resp.json();
+            if (!data.success) return;
+
+            const m = data.data.summary || {};
+            const total = m.total_villages || 0;
+            const pending = m.pending_villages || 0;
+            const assigned = m.assigned_villages || 0;
+            const completed = m.completed_villages || 0;
+            const pct = m.progress_percentage || 0;
+
+            if (document.getElementById('villagesStatTotal')) {
+                document.getElementById('villagesStatTotal').textContent = total.toLocaleString();
+            }
+            if (document.getElementById('villagesStatPending')) {
+                document.getElementById('villagesStatPending').textContent = pending.toLocaleString();
+            }
+            if (document.getElementById('villagesStatAssigned')) {
+                document.getElementById('villagesStatAssigned').textContent = assigned.toLocaleString();
+            }
+            if (document.getElementById('villagesStatCompleted')) {
+                document.getElementById('villagesStatCompleted').textContent = completed.toLocaleString();
+            }
+            if (document.getElementById('villagesStatProgress')) {
+                document.getElementById('villagesStatProgress').textContent = `${pct}%`;
+            }
+            if (document.getElementById('villagesProgressBar')) {
+                document.getElementById('villagesProgressBar').style.width = `${Math.min(pct, 100)}%`;
+            }
+
+            // Quick status pills count badges
+            if (document.getElementById('pillCountAll')) {
+                document.getElementById('pillCountAll').textContent = total.toLocaleString();
+            }
+            if (document.getElementById('pillCountPending')) {
+                document.getElementById('pillCountPending').textContent = pending.toLocaleString();
+            }
+            if (document.getElementById('pillCountAssigned')) {
+                document.getElementById('pillCountAssigned').textContent = assigned.toLocaleString();
+            }
+            if (document.getElementById('pillCountCompleted')) {
+                document.getElementById('pillCountCompleted').textContent = completed.toLocaleString();
+            }
+        } catch (e) {
+            console.warn('Could not load scope metrics:', e);
+        }
+    },
+
+    openWithFilters({ zone = '', status = 'all' } = {}) {
+        this.currentZone = zone || '';
+        this.currentStatus = status || 'all';
+
+        const zoneSel = document.getElementById('filterZone');
+        if (zoneSel) zoneSel.value = this.currentZone;
+
+        const statusSel = document.getElementById('filterStatus');
+        if (statusSel) statusSel.value = (this.currentStatus === 'all') ? '' : this.currentStatus;
+
+        // Reset text search, district, subdistrict, person
+        const searchInput = document.getElementById('villageSearchInput');
+        if (searchInput) searchInput.value = '';
+        const distSel = document.getElementById('filterDistrict');
+        if (distSel) distSel.value = '';
+        const subSel = document.getElementById('filterSubdistrict');
+        if (subSel) subSel.value = '';
+        const personSel = document.getElementById('filterAssignedPerson');
+        if (personSel) personSel.value = '';
+
+        // Update pill button active states
+        ['all', 'pending', 'assigned', 'completed'].forEach(t => {
+            const btn = document.getElementById(`pillStatus${t.charAt(0).toUpperCase() + t.slice(1)}`);
+            if (btn) {
+                if (t === this.currentStatus) btn.classList.add('active');
+                else btn.classList.remove('active');
+            }
+        });
+
+        this.updateScopeHeader();
+        this.loadScopeMetrics();
+        this.currentPage = 1;
+        this.load();
+    },
+
+    setStatusTab(tab) {
+        this.currentStatus = tab || 'all';
+
+        // Update pill buttons active state
+        ['all', 'pending', 'assigned', 'completed'].forEach(t => {
+            const btn = document.getElementById(`pillStatus${t.charAt(0).toUpperCase() + t.slice(1)}`);
+            if (btn) {
+                if (t === this.currentStatus) btn.classList.add('active');
+                else btn.classList.remove('active');
+            }
+        });
+
+        // Sync status dropdown
+        const filterStatus = document.getElementById('filterStatus');
+        if (filterStatus) {
+            filterStatus.value = (this.currentStatus === 'all') ? '' : this.currentStatus;
+        }
+
+        this.updateScopeHeader();
+        this.currentPage = 1;
+        this.load();
+    },
+
     async loadFilters() {
         try {
             const resp = await fetch('/api/villages/filters');
@@ -979,18 +1887,36 @@ const VillagesManager = {
             if (data.success) {
                 const distSel = document.getElementById('filterDistrict');
                 if (distSel) {
+                    const currentDist = distSel.value;
                     distSel.innerHTML = '<option value="">All Districts</option>' + 
-                        data.districts.map(d => `<option value="${d}">${d}</option>`).join('');
+                        (data.districts || []).map(d => `<option value="${escapeQuotes(d)}" ${d === currentDist ? 'selected' : ''}>${d}</option>`).join('');
                 }
                 const subSel = document.getElementById('filterSubdistrict');
                 if (subSel) {
-                    subSel.innerHTML = '<option value="">All Subdistricts</option>' + 
-                        data.subdistricts.map(s => `<option value="${s}">${s}</option>`).join('');
+                    const currentSub = subSel.value;
+                    subSel.innerHTML = '<option value="">All Talukas</option>' + 
+                        (data.subdistricts || []).map(s => `<option value="${escapeQuotes(s)}" ${s === currentSub ? 'selected' : ''}>${s}</option>`).join('');
                 }
                 const zoneSel = document.getElementById('filterZone');
                 if (zoneSel) {
-                    zoneSel.innerHTML = '<option value="">All Zones</option>' + 
-                        data.zones.map(z => `<option value="${z}">${z}</option>`).join('');
+                    const currentZone = this.currentZone || zoneSel.value;
+                    const zones = data.zones && data.zones.length > 0 ? data.zones : ['GPIC', 'KPIC', 'VPIC', 'RPIC'];
+                    let zoneHtml = '<option value="">All Zones</option>';
+                    zones.forEach(z => {
+                        zoneHtml += `<option value="${escapeQuotes(z)}" ${z === currentZone ? 'selected' : ''}>${z}</option>`;
+                    });
+                    zoneSel.innerHTML = zoneHtml;
+                }
+                const personSel = document.getElementById('filterAssignedPerson');
+                if (personSel) {
+                    const currentP = personSel.value;
+                    let personHtml = '<option value="">All Surveyors</option><option value="unassigned">Unassigned</option>';
+                    if (data.persons && data.persons.length > 0) {
+                        data.persons.forEach(p => {
+                            personHtml += `<option value="${p.id}" ${p.id == currentP ? 'selected' : ''}>${p.name || p.full_name || p.username}</option>`;
+                        });
+                    }
+                    personSel.innerHTML = personHtml;
                 }
             }
         } catch (e) {
@@ -1000,10 +1926,18 @@ const VillagesManager = {
 
     async load() {
         const search = document.getElementById('villageSearchInput')?.value || '';
+        const zone = document.getElementById('filterZone')?.value || '';
         const district = document.getElementById('filterDistrict')?.value || '';
         const subdistrict = document.getElementById('filterSubdistrict')?.value || '';
-        const zone = document.getElementById('filterZone')?.value || '';
+        const person = document.getElementById('filterAssignedPerson')?.value || '';
         const status = document.getElementById('filterStatus')?.value || '';
+
+        // If zone filter dropdown changed, synchronize scope
+        if (zone !== this.currentZone) {
+            this.currentZone = zone;
+            this.updateScopeHeader();
+            this.loadScopeMetrics();
+        }
 
         const params = new URLSearchParams({
             page: this.currentPage,
@@ -1012,10 +1946,19 @@ const VillagesManager = {
             district,
             subdistrict,
             zone,
-            status,
             sort_by: this.sortBy,
             sort_dir: this.sortDir
         });
+
+        if (person === 'unassigned') {
+            params.append('assignment_status', 'unassigned');
+        } else if (person) {
+            params.append('person_id', person);
+        }
+
+        if (status) {
+            params.append('status', status);
+        }
 
         try {
             const resp = await fetch(`/api/villages?${params.toString()}`);
@@ -1032,59 +1975,109 @@ const VillagesManager = {
         const tbody = document.getElementById('villagesTableBody');
         if (!tbody) return;
 
-        if (data.items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="16" style="text-align: center; padding: 36px; color: #94a3b8;">No matching villages found.</td></tr>';
+        if (!data.items || data.items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 36px; color: #94a3b8;">No matching villages found in database.</td></tr>';
             this.updatePagination(0, 0, 1, 1);
             return;
         }
 
         tbody.innerHTML = data.items.map(v => {
             const isChecked = this.selectedIds.has(v.id) ? 'checked' : '';
-            const kmlLink = v.kml_id 
-                ? `<a href="/api/kml/download/${v.kml_id}" class="badge badge-kml" style="text-decoration:none;" title="Download KML"><i data-lucide="download" style="width:12px;height:12px;"></i> KML v${v.kml_version}</a>`
-                : `<span style="color:#94a3b8; font-size:0.75rem;">None</span>`;
+            const isCorrection = (v.work_status === 'Correction Required' || v.kml_status === 'Correction Required');
+            const isDone = !isCorrection && (v.work_status === 'Done' || ['Done', 'Verified', 'Marking Completed', 'Finalized'].includes(v.kml_status));
+            
+            let statusBadge = '';
+            if (isCorrection) {
+                statusBadge = `
+                    <span class="badge" style="background:#fff1f2; color:#e11d48; border:1px solid #fecdd3; font-weight:700; display:inline-flex; align-items:center; gap:3px;">
+                        <i data-lucide="alert-circle" style="width:12px;height:12px;"></i> Correction Required
+                    </span>
+                    ${v.correction_reason ? `<div style="font-size:0.72rem; color:#be123c; margin-top:2px; max-width:200px; white-space:normal; line-height:1.2;" title="${escapeQuotes(v.correction_reason)}">Reason: ${escapeQuotes(v.correction_reason)}</div>` : ''}
+                `;
+            } else if (isDone) {
+                const compDateStr = v.completion_date || (v.updated_at ? new Date(v.updated_at).toLocaleDateString() : '');
+                statusBadge = `
+                    <span class="badge" style="background:#ecfdf5; color:#059669; border:1px solid #a7f3d0; font-weight:700; display:inline-flex; align-items:center; gap:3px;">
+                        <i data-lucide="check-circle-2" style="width:12px;height:12px;"></i> Completed
+                    </span>
+                    ${compDateStr ? `<div style="font-size:0.72rem; color:#059669; font-weight:600; margin-top:2px;">Completed: ${compDateStr}</div>` : ''}
+                `;
+            } else if (v.assigned_person_name) {
+                statusBadge = `
+                    <span class="badge" style="background:#fef3c7; color:#b45309; border:1px solid #fde68a; font-weight:600; display:inline-flex; align-items:center; gap:3px;">
+                        <i data-lucide="clock" style="width:12px;height:12px;"></i> Pending
+                    </span>
+                `;
+            } else {
+                statusBadge = `
+                    <span class="badge" style="background:#f1f5f9; color:#64748b; border:1px solid #e2e8f0; font-weight:600; display:inline-flex; align-items:center; gap:3px;">
+                        <i data-lucide="circle-dashed" style="width:12px;height:12px;"></i> Pending (Unassigned)
+                    </span>
+                `;
+            }
+
+            let personCol = '';
+            if (v.assigned_person_name) {
+                personCol = `
+                    <div style="font-weight:600; color:#1e293b; font-size:0.86rem; display:flex; align-items:center; gap:4px;">
+                        <i data-lucide="user" style="width:13px;height:13px; color:#4f46e5;"></i>
+                        <span>${v.assigned_person_name}</span>
+                    </div>
+                `;
+            } else {
+                personCol = `<span style="color:#94a3b8; font-size:0.8rem; font-style:italic;">Unassigned</span>`;
+            }
+
+            const kmlButton = v.kml_id 
+                ? `<button class="btn btn-secondary btn-sm" onclick="VillagesManager.previewMap(${v.id}, '${escapeQuotes(v.village_name)}')" title="GIS Map Preview"><i data-lucide="map" style="width:13px;height:13px;"></i></button>`
+                : '';
+
+            const openWorkBtn = `<button class="btn btn-sm btn-primary" onclick="VillagesManager.openVillageWork(${v.id}, '${escapeQuotes(v.generated_review_url || '')}', this)" style="padding: 4px 9px; font-size: 0.78rem; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; margin-right: 2px;" title="Open village in Village Wells marking portal">
+                <i data-lucide="external-link" style="width: 12px; height: 12px;"></i> <span>Open Village Work</span>
+            </button>`;
+
+            const reassignBtn = `<button class="btn btn-sm btn-secondary" onclick="VillagesManager.promptReassignVillage(${v.id}, '${escapeQuotes(v.village_name)}', '${escapeQuotes(v.village_code)}', ${v.assigned_person_id || 'null'}, '${escapeQuotes(v.assigned_person_name || '')}')" style="padding: 4px 8px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 4px; margin-right: 2px; color: #4338ca; border-color: #c7d2fe;" title="Reassign to another surveyor">
+                <i data-lucide="user-plus" style="width: 12px; height: 12px;"></i> <span>Reassign</span>
+            </button>`;
+
+            const historyBtn = `<button class="btn btn-sm btn-secondary" onclick="VillagesManager.showAssignmentHistory(${v.id}, '${escapeQuotes(v.village_name)}', '${escapeQuotes(v.village_code)}')" style="padding: 4px 8px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 3px; margin-right: 2px;" title="View Assignment &amp; Correction History">
+                <i data-lucide="history" style="width: 12px; height: 12px;"></i> <span>History</span>
+            </button>`;
+
+            const reopenButton = isDone
+                ? `<button class="btn btn-secondary btn-sm" style="color:#d97706; border-color:#fde68a; margin-right:2px; padding: 4px 8px; font-size: 0.78rem;" onclick="VillagesManager.promptReopenVillage(${v.id}, '${escapeQuotes(v.village_name)}', '${escapeQuotes(v.village_code)}', ${v.assigned_person_id || 'null'}, '${escapeQuotes(v.assigned_person_name || '')}')" title="Reopen &amp; Send for Correction">
+                    <i data-lucide="rotate-ccw" style="width:12px;height:12px;"></i> Reopen
+                   </button>`
+                : '';
 
             return `
                 <tr>
                     <td><input type="checkbox" class="village-row-checkbox" value="${v.id}" ${isChecked} onchange="VillagesManager.toggleRow(${v.id}, this.checked)"></td>
-                    <td>${v.zone || ''}</td>
-                    <td><strong>${v.district_name}</strong></td>
-                    <td>${v.subdistrict_name}</td>
-                    <td><strong>${v.village_name}</strong></td>
-                    <td><code style="font-weight:600; color:#1e293b;">${v.village_code}</code></td>
-                    <td>${v.geb_connection || ''}</td>
-                    <td style="text-align:right;">${v.google_search_orig_nos || 0}</td>
-                    <td style="text-align:right;">${v.google_edited_nos || 0}</td>
-                    <td style="text-align:right;"><strong>${v.total_wells || 0}</strong></td>
-                    <td style="text-align:right;">${v.dugwells || 0}</td>
-                    <td style="text-align:right;">${v.bores || 0}</td>
-                    <td>${kmlLink}</td>
+                    <td><span class="badge" style="background:#f8fafc; border:1px solid #e2e8f0; font-weight:700; color:#334155;">${v.zone || '-'}</span></td>
+                    <td><strong>${v.district_name || '-'}</strong></td>
+                    <td>${v.subdistrict_name || '-'}</td>
+                    <td><strong style="color:#0f172a;">${v.village_name}</strong></td>
+                    <td><code style="font-weight:600; color:#1e293b; background:#f1f5f9; padding:2px 6px; border-radius:4px;">${v.village_code}</code></td>
+                    <td>${personCol}</td>
                     <td>
-                        ${(v.work_status === 'Done' || v.kml_status === 'Done') ? `
-                            <span class="badge" style="background:#ecfdf5; color:#059669; border:1px solid #a7f3d0; font-weight:700; display:inline-flex; align-items:center; gap:3px;">
-                                <i data-lucide="check-circle-2" style="width:12px;height:12px;"></i> Done
-                            </span>
-                            ${v.assigned_person_name ? `<div style="font-size:0.72rem; color:#059669; font-weight:500; margin-top:2px;">by ${v.assigned_person_name}</div>` : ''}
-                            ${v.updated_at ? `<div style="font-size:0.70rem; color:#64748b;">${new Date(v.updated_at).toLocaleDateString()}</div>` : ''}
-                        ` : (v.assigned_person_name ? `
-                            <span class="badge" style="background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; font-weight:600;">Assigned</span>
-                            <div style="font-size:0.72rem; color:#1e293b; font-weight:500; margin-top:2px;">to ${v.assigned_person_name}</div>
-                            <div style="font-size:0.70rem; color:#d97706; font-weight:600;">Pending</div>
-                        ` : `
-                            <span class="badge ${getStatusBadgeClass(v.kml_status)}">${v.kml_status || 'Pending'}</span>
-                        `)}
+                        <div style="font-size:0.82rem; color:#334155; font-weight:500;">${v.geb_connection || '-'}</div>
+                        <div style="font-size:0.73rem; color:#64748b;">Total: <strong>${v.total_wells || 0}</strong> (B:${v.bores || 0} / D:${v.dugwells || 0})</div>
                     </td>
-                    <td style="max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${v.remark||''}">${v.remark || ''}</td>
+                    <td>${statusBadge}</td>
                     <td style="text-align:right; white-space:nowrap;">
+                        ${openWorkBtn}
+                        ${reassignBtn}
+                        ${historyBtn}
+                        ${reopenButton}
                         <button class="btn btn-secondary btn-sm" onclick="QueueManager.openVillage(${v.id})" title="Process in Queue">
-                            <i data-lucide="play" style="width:14px; height:14px;"></i>
+                            <i data-lucide="play" style="width:13px; height:13px;"></i>
                         </button>
                         <button class="btn btn-secondary btn-sm" onclick="VillagesManager.openEditModal(${v.id})" title="Edit Details">
-                            <i data-lucide="edit" style="width:14px; height:14px;"></i>
+                            <i data-lucide="edit" style="width:13px; height:13px;"></i>
                         </button>
-                        ${v.kml_id ? `<button class="btn btn-secondary btn-sm" onclick="VillagesManager.previewMap(${v.id}, '${escapeQuotes(v.village_name)}')" title="GIS Map Preview"><i data-lucide="map" style="width:14px;height:14px;"></i></button>` : ''}
-                        <button class="btn btn-outline btn-sm" style="color: #ef4444; border-color: #fca5a5; margin-left: 4px;" onclick="VillagesManager.confirmDelete(${v.id}, '${escapeQuotes(v.village_name)}', '${escapeQuotes(v.village_code)}')" title="Remove Village">
-                            <i data-lucide="trash-2" style="width:14px; height:14px;"></i>
+                        ${kmlButton}
+                        <button class="btn btn-outline btn-sm" style="color: #ef4444; border-color: #fca5a5; margin-left: 2px;" onclick="VillagesManager.confirmDelete(${v.id}, '${escapeQuotes(v.village_name)}', '${escapeQuotes(v.village_code)}')" title="Remove Village">
+                            <i data-lucide="trash-2" style="width:13px; height:13px;"></i>
                         </button>
                     </td>
                 </tr>
@@ -1093,6 +2086,239 @@ const VillagesManager = {
 
         this.updatePagination(data.total_count, data.items.length, data.current_page, data.total_pages);
         lucide.createIcons();
+    },
+
+    async openVillageWork(villageId, existingUrl, btnEl) {
+        if (existingUrl && existingUrl.trim().startsWith('http')) {
+            window.open(existingUrl.trim(), '_blank');
+            return;
+        }
+
+        if (btnEl) {
+            btnEl.disabled = true;
+            btnEl.innerHTML = '<i data-lucide="loader-2" class="spin" style="width: 12px; height: 12px;"></i> Opening...';
+            lucide.createIcons();
+        }
+
+        try {
+            const checkResp = await fetch(`/api/villages/${villageId}/review-url`);
+            const checkData = await checkResp.json();
+            if (checkData.success && checkData.review_url && checkData.review_url.startsWith('http')) {
+                window.open(checkData.review_url, '_blank');
+                return;
+            }
+
+            const genResp = await fetch(`/api/user/villages/${villageId}/ensure-link`, { method: 'POST' });
+            const genData = await genResp.json();
+            if (!genData.success || !genData.link) {
+                throw new Error(genData.error || 'No review link recorded for this village');
+            }
+
+            window.open(genData.link, '_blank');
+            await this.load();
+        } catch (err) {
+            App.toast(`Review link notice: ${err.message}`, 'warning');
+        } finally {
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.innerHTML = '<i data-lucide="external-link" style="width: 12px; height: 12px;"></i> <span>Open Village Work</span>';
+                lucide.createIcons();
+            }
+        }
+    },
+
+    async promptReassignVillage(villageId, villageName, villageCode, assignedPersonId, assignedPersonName) {
+        const modal = document.getElementById('reassignVillageModal');
+        if (!modal) return;
+
+        document.getElementById('reassignVillageId').value = villageId;
+        document.getElementById('reassignVillageDisplayName').textContent = villageName || 'Village';
+        document.getElementById('reassignVillageDisplayCode').textContent = villageCode || '-';
+        document.getElementById('reassignVillageDisplayPerson').textContent = assignedPersonName || 'Unassigned';
+        document.getElementById('reassignNote').value = '';
+
+        const select = document.getElementById('reassignTargetPersonSelect');
+        if (select) {
+            select.innerHTML = '<option value="">Loading surveyors...</option>';
+            try {
+                const resp = await fetch('/api/persons');
+                const data = await resp.json();
+                let options = '<option value="">-- Choose Field Surveyor --</option>';
+                (data.persons || []).forEach(p => {
+                    const pid = p.id;
+                    const pname = p.name || `Surveyor #${pid}`;
+                    const isCurrent = (assignedPersonId && pid == assignedPersonId);
+                    options += `<option value="${pid}" ${isCurrent ? 'disabled' : ''}>${escapeQuotes(pname)} ${isCurrent ? '(Current Assignee)' : ''}</option>`;
+                });
+                select.innerHTML = options;
+            } catch (err) {
+                select.innerHTML = '<option value="">Error loading surveyors</option>';
+            }
+        }
+
+        App.openModal('reassignVillageModal');
+        lucide.createIcons();
+    },
+
+    async executeReassignVillage(e) {
+        if (e) e.preventDefault();
+
+        const villageId = parseInt(document.getElementById('reassignVillageId').value);
+        const personSelect = document.getElementById('reassignTargetPersonSelect');
+        const newPersonId = personSelect && personSelect.value ? parseInt(personSelect.value) : null;
+        const note = (document.getElementById('reassignNote').value || '').trim();
+
+        if (!villageId) {
+            App.toast('Invalid village ID', 'error');
+            return;
+        }
+        if (!newPersonId) {
+            App.toast('Please select a target surveyor to reassign', 'warning');
+            return;
+        }
+
+        const submitBtn = document.getElementById('reassignSubmitBtn');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i data-lucide="loader-2" class="spin"></i> Reassigning...';
+            lucide.createIcons();
+        }
+
+        try {
+            const resp = await fetch(`/api/villages/${villageId}/reassign`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ person_id: newPersonId, reason: note })
+            });
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error);
+
+            App.closeModal('reassignVillageModal');
+            App.toast(`Village successfully reassigned to ${data.data?.new_person || 'surveyor'}!`, 'success');
+
+            await this.load();
+            await this.loadScopeMetrics();
+            if (typeof DashboardManager !== 'undefined' && DashboardManager.load) {
+                DashboardManager.load();
+            }
+            if (typeof PersonManager !== 'undefined' && PersonManager.load) {
+                PersonManager.load();
+            }
+        } catch (err) {
+            App.toast(`Reassignment error: ${err.message}`, 'error');
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i data-lucide="user-check"></i> <span>Confirm Reassignment</span>';
+                lucide.createIcons();
+            }
+        }
+    },
+
+    async showAssignmentHistory(villageId, villageName, villageCode) {
+        const modal = document.getElementById('assignmentHistoryModal');
+        if (!modal) return;
+
+        document.getElementById('historyModalVillageName').textContent = villageName || 'Village';
+        document.getElementById('historyModalVillageCode').textContent = villageCode || '-';
+        const container = document.getElementById('historyModalTimelineContainer');
+        const linkBox = document.getElementById('historyModalReviewLinkBox');
+        const linkEl = document.getElementById('historyModalReviewLink');
+        const statusBox = document.getElementById('historyModalStatusBadges');
+
+        container.innerHTML = '<div style="text-align: center; color: #94a3b8; padding: 24px;"><i data-lucide="loader-2" class="spin" style="width: 24px; height: 24px; margin-bottom: 8px; display: inline-block;"></i><div>Loading assignment history...</div></div>';
+        App.openModal('assignmentHistoryModal');
+        lucide.createIcons();
+
+        try {
+            const resp = await fetch(`/api/villages/${villageId}/assignment-history`);
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error);
+
+            const d = data.data || {};
+            const v = d.village || {};
+            document.getElementById('historyModalVillageLocation').textContent = `${v.zone || ''} • ${v.district_name || ''} • ${v.subdistrict_name || ''}`;
+
+            if (statusBox) {
+                statusBox.innerHTML = `
+                    <span class="badge" style="background:#f1f5f9; color:#1e293b; border:1px solid #cbd5e1; font-weight:700;">${v.work_status || 'Pending'}</span>
+                    <span class="badge" style="background:#e0e7ff; color:#3730a3; font-weight:700;">${v.assigned_person_name || 'Unassigned'}</span>
+                `;
+            }
+
+            if (v.generated_review_url && linkBox && linkEl) {
+                linkBox.style.display = 'block';
+                linkEl.href = v.generated_review_url;
+                linkEl.textContent = v.generated_review_url;
+            } else if (linkBox) {
+                linkBox.style.display = 'none';
+            }
+
+            const events = [];
+            (d.assignments || []).forEach(a => {
+                events.push({
+                    type: 'assignment',
+                    title: `Assigned to ${a.person_name || 'Surveyor'}`,
+                    detail: `Status: ${a.status} • Assigned by: ${a.assigned_by || 'Admin'} ${a.unassigned_at ? ' • Unassigned: ' + a.unassigned_at : ''}`,
+                    date: a.assigned_at,
+                    badge: a.status === 'Active' ? 'Active' : 'Previous',
+                    badgeColor: a.status === 'Active' ? '#10b981' : '#64748b'
+                });
+            });
+
+            (d.corrections || []).forEach(c => {
+                events.push({
+                    type: 'correction',
+                    title: `Correction Reopen: ${c.correction_reason || 'Reopened'}`,
+                    detail: `Reopened by: ${c.reopened_by || 'Admin'} • Reassigned to: ${c.new_person_name || 'Same Surveyor'} ${c.resolved_at ? ' • Resolved: ' + c.resolved_at : ' • Pending Correction'}`,
+                    date: c.reopened_at,
+                    badge: c.status || 'Pending',
+                    badgeColor: c.status === 'Resolved' ? '#10b981' : '#d97706'
+                });
+            });
+
+            (d.processing || []).forEach(p => {
+                events.push({
+                    type: 'processing',
+                    title: `Status: ${p.new_status}`,
+                    detail: `${p.action_note || ''} (by ${p.changed_by || 'System'})`,
+                    date: p.created_at,
+                    badge: p.new_status,
+                    badgeColor: '#2563eb'
+                });
+            });
+
+            events.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+            if (events.length === 0) {
+                container.innerHTML = '<div style="text-align: center; color: #94a3b8; padding: 24px;">No assignment or audit records found for this village.</div>';
+                return;
+            }
+
+            container.innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                    ${events.map(ev => `
+                        <div style="border-left: 3px solid ${ev.badgeColor}; background: #ffffff; border: 1px solid #e2e8f0; border-left-width: 4px; border-left-color: ${ev.badgeColor}; border-radius: 6px; padding: 12px 16px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 6px;">
+                                <strong style="color: #0f172a; font-size: 0.88rem;">${ev.title}</strong>
+                                <span class="badge" style="font-size: 0.72rem; padding: 2px 8px; border-radius: 12px; background: ${ev.badgeColor}15; color: ${ev.badgeColor}; font-weight: 700;">
+                                    ${ev.badge}
+                                </span>
+                            </div>
+                            <div style="font-size: 0.8rem; color: #475569; margin-bottom: 4px;">${ev.detail}</div>
+                            <div style="font-size: 0.72rem; color: #94a3b8;">${ev.date ? new Date(ev.date).toLocaleString() : '-'}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            lucide.createIcons();
+        } catch (err) {
+            container.innerHTML = `<div style="text-align: center; color: #ef4444; padding: 24px;">Failed to load history: ${err.message}</div>`;
+        }
+    },
+
+    warnMissingReviewLink(villageName, villageCode) {
+        App.toast(`Warning: No genuine review URL recorded in database for village "${villageName}" (${villageCode}). Generating fake URLs is strictly prohibited.`, 'warning');
     },
 
     toggleRow(id, isChecked) {
@@ -1245,6 +2471,108 @@ const VillagesManager = {
                 App.toast('Could not render GIS map.', 'error');
             }
         }, 200);
+    },
+
+    async promptReopenVillage(villageId, villageName, villageCode, assignedPersonId, assignedPersonName) {
+        const modal = document.getElementById('reopenVillageModal');
+        if (!modal) return;
+
+        document.getElementById('reopenVillageId').value = villageId;
+        document.getElementById('reopenVillageDisplayName').textContent = villageName || 'Village';
+        document.getElementById('reopenVillageDisplayCode').textContent = villageCode || '—';
+        document.getElementById('reopenVillageDisplayPerson').textContent = assignedPersonName || 'Unassigned';
+        document.getElementById('reopenCorrectionReason').value = '';
+
+        // Populate person dropdown
+        const select = document.getElementById('reopenTargetPersonSelect');
+        if (select) {
+            select.innerHTML = '<option value="">Loading surveyors...</option>';
+            try {
+                const resp = await fetch('/api/persons');
+                const data = await resp.json();
+                const persons = data.persons || data.data || [];
+                let options = '<option value="">-- Choose Field Surveyor (or keep unassigned) --</option>';
+                persons.forEach(p => {
+                    const pid = p.id;
+                    const pname = p.name || p.full_name || p.username;
+                    const isSelected = (assignedPersonId && pid == assignedPersonId) ? 'selected' : '';
+                    options += `<option value="${pid}" ${isSelected}>${escapeQuotes(pname)}</option>`;
+                });
+                select.innerHTML = options;
+            } catch (err) {
+                console.error('Error loading persons for reopen modal:', err);
+                select.innerHTML = '<option value="">Failed to load surveyors</option>';
+            }
+        }
+
+        const submitBtn = document.getElementById('reopenSubmitBtn');
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i data-lucide="rotate-ccw"></i> <span>Confirm Reopen &amp; Reassign</span>';
+        }
+
+        App.openModal('reopenVillageModal');
+        if (window.lucide) lucide.createIcons();
+    },
+
+    async executeReopenVillage(e) {
+        if (e) e.preventDefault();
+
+        const villageId = parseInt(document.getElementById('reopenVillageId').value);
+        const reason = (document.getElementById('reopenCorrectionReason').value || '').trim();
+        const personSelect = document.getElementById('reopenTargetPersonSelect');
+        const newPersonId = personSelect && personSelect.value ? parseInt(personSelect.value) : null;
+
+        if (!villageId) {
+            App.toast('Invalid village ID', 'error');
+            return;
+        }
+
+        if (!reason) {
+            App.toast('Please provide a correction reason.', 'warning');
+            document.getElementById('reopenCorrectionReason').focus();
+            return;
+        }
+
+        const submitBtn = document.getElementById('reopenSubmitBtn');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i data-lucide="loader-2" class="spin"></i> <span>Reopening...</span>';
+            if (window.lucide) lucide.createIcons();
+        }
+
+        try {
+            const resp = await fetch(`/api/villages/${villageId}/reopen`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    reason: reason,
+                    new_person_id: newPersonId
+                })
+            });
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error || 'Failed to reopen village');
+
+            App.closeModal('reopenVillageModal');
+            App.toast(`Village reopened and marked for correction: ${data.message || ''}`, 'success');
+
+            // Refresh village table and metrics
+            await this.load();
+            await this.loadScopeMetrics();
+
+            // Also reload Dashboard if DashboardManager exists
+            if (typeof DashboardManager !== 'undefined' && DashboardManager.load) {
+                DashboardManager.load();
+            }
+        } catch (err) {
+            App.toast(`Reopen error: ${err.message}`, 'error');
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i data-lucide="rotate-ccw"></i> <span>Confirm Reopen &amp; Reassign</span>';
+                if (window.lucide) lucide.createIcons();
+            }
+        }
     },
 
     confirmDelete(id, name, code) {
@@ -2520,22 +3848,35 @@ const SettingsManager = {
     async load() {
         try {
             const resp = await fetch('/api/settings');
+            if (!resp.ok) {
+                const errData = await resp.json().catch(() => ({}));
+                throw new Error(errData.error || `HTTP ${resp.status}`);
+            }
             const data = await resp.json();
-            if (!data.success) throw new Error(data.error);
+            if (!data.success) throw new Error(data.error || 'API returned unsuccessful response');
 
             const h = data.db_health || {};
-            document.getElementById('diagStatus').textContent = h.connected ? 'Healthy / Active' : 'Disconnected';
-            document.getElementById('diagStatus').style.color = h.connected ? '#166534' : '#dc2626';
-            document.getElementById('diagDriver').textContent = h.driver || 'Auto';
-            document.getElementById('diagDbName').textContent = h.database || 'BorewellPortalDB';
-            document.getElementById('diagTime').textContent = h.server_time || '-';
-            document.getElementById('diagVersion').textContent = h.version_summary || '-';
+            const diagStatus = document.getElementById('diagStatus');
+            if (diagStatus) {
+                diagStatus.textContent = h.connected ? 'Healthy / Active' : 'Disconnected';
+                diagStatus.style.color = h.connected ? '#166534' : '#dc2626';
+            }
+            const diagDriver = document.getElementById('diagDriver');
+            if (diagDriver) diagDriver.textContent = h.driver || 'Auto';
+            const diagDbName = document.getElementById('diagDbName');
+            if (diagDbName) diagDbName.textContent = h.database || 'BorewellPortalDB';
+            const diagTime = document.getElementById('diagTime');
+            if (diagTime) diagTime.textContent = h.server_time || '-';
+            const diagVersion = document.getElementById('diagVersion');
+            if (diagVersion) diagVersion.textContent = h.version_summary || '-';
 
             const settings = data.settings || {};
-            if (settings.marking_portal_url) {
-                document.getElementById('markingPortalUrlInput').value = settings.marking_portal_url;
+            const markingUrlInput = document.getElementById('markingPortalUrlInput');
+            if (markingUrlInput && settings.marking_portal_url !== undefined) {
+                markingUrlInput.value = settings.marking_portal_url;
             }
         } catch (e) {
+            console.error('SettingsManager.load failed:', e);
             App.toast('Failed to load settings.', 'error');
         }
     },
@@ -2568,18 +3909,32 @@ const SettingsManager = {
             e.preventDefault();
             const old_password = document.getElementById('currPassword').value;
             const new_password = document.getElementById('newPassword').value;
+            const confirm_password = document.getElementById('confirmNewPassword')?.value;
+
+            if (confirm_password !== undefined && new_password !== confirm_password) {
+                App.toast('New password and confirm password do not match.', 'warning');
+                return;
+            }
 
             try {
                 const resp = await fetch('/api/auth/change-password', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ old_password, new_password })
+                    body: JSON.stringify({ old_password, new_password, confirm_password })
                 });
                 const d = await resp.json();
                 if (d.success) {
                     App.toast('Password changed successfully!', 'success');
                     document.getElementById('currPassword').value = '';
                     document.getElementById('newPassword').value = '';
+                    if (document.getElementById('confirmNewPassword')) {
+                        document.getElementById('confirmNewPassword').value = '';
+                    }
+                    if (window.PasswordVisibility) {
+                        PasswordVisibility.reset('currPassword');
+                        PasswordVisibility.reset('newPassword');
+                        PasswordVisibility.reset('confirmNewPassword');
+                    }
                 } else {
                     throw new Error(d.error);
                 }
@@ -3142,6 +4497,9 @@ const UserSettingsManager = {
         document.getElementById('pwRequiredMarker').style.display = 'inline';
         document.getElementById('formUserPassword').required = true;
         document.getElementById('pwHelpText').textContent = 'Minimum 4 characters. Will be used for user login.';
+        if (window.PasswordVisibility) {
+            PasswordVisibility.reset('formUserPassword');
+        }
         App.openModal('userAddModal');
     },
 
@@ -3159,6 +4517,9 @@ const UserSettingsManager = {
         document.getElementById('pwRequiredMarker').style.display = 'none';
         document.getElementById('pwHelpText').textContent = 'Leave blank to keep existing password unchanged.';
         document.getElementById('userModalTitle').textContent = `Edit User: ${u.username}`;
+        if (window.PasswordVisibility) {
+            PasswordVisibility.reset('formUserPassword');
+        }
 
         App.openModal('userAddModal');
     },
@@ -3201,6 +4562,9 @@ const UserSettingsManager = {
             if (!resData.success) throw new Error(resData.error);
 
             App.closeModal('userAddModal');
+            if (window.PasswordVisibility) {
+                PasswordVisibility.reset('formUserPassword');
+            }
             App.toast(resData.message || 'User saved successfully.', 'success');
             await this.load();
             if (typeof PersonManager !== 'undefined' && PersonManager.load) {
@@ -3258,17 +4622,98 @@ const UserSettingsManager = {
 
 const UserWorkManager = {
     villages: [],
+    history: [],
     pollTimer: null,
     searchDebounce: null,
+    _focusBound: false,
 
     init() {
         this.loadDashboard();
         this.loadAssignedVillages();
+        this.loadHistory();
         // Start background polling every 10 seconds to detect remote completion automatically
         if (this.pollTimer) clearInterval(this.pollTimer);
         this.pollTimer = setInterval(() => {
             this.syncAndCheckCompletions(true);
         }, 10000);
+
+        // Window focus event listener: instant sync when returning from marking portal tab
+        if (!this._focusBound) {
+            this._focusBound = true;
+            window.addEventListener('focus', () => {
+                const role = document.body.getAttribute('data-user-role');
+                if (role && role !== 'admin') {
+                    this.syncAndCheckCompletions(true);
+                    this.loadHistory();
+                }
+            });
+        }
+    },
+
+    escapeText(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    },
+
+    async loadHistory() {
+        const dashList = document.getElementById('userDashboardHistoryList');
+        const fullList = document.getElementById('userFullHistoryList');
+        const badge = document.getElementById('userDashboardHistoryBadge');
+
+        try {
+            const resp = await fetch('/api/user/history');
+            const data = await resp.json();
+            if (!data.success) return;
+
+            const items = data.items || [];
+            this.history = items;
+
+            if (badge) {
+                badge.textContent = `${items.length} completed`;
+            }
+
+            const renderItemsHtml = (listItems) => {
+                if (!listItems.length) {
+                    return `
+                        <div style="color: #94a3b8; font-size: 0.9rem; padding: 12px 0; text-align: center;">
+                            No completed villages yet. Complete village well markings to see your history here.
+                        </div>
+                    `;
+                }
+
+                return listItems.map(item => `
+                    <div class="history-item" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; transition: background 0.15s ease;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="width: 7px; height: 7px; border-radius: 50%; background: #10b981; display: inline-block; flex-shrink: 0;"></span>
+                            <span style="font-weight: 600; color: #1e293b; font-size: 0.92rem;">${this.escapeText(item.village_name)}</span>
+                            <span style="color: #94a3b8; font-weight: 500;">—</span>
+                            <span style="color: #475569; font-size: 0.88rem; font-weight: 500;">${this.escapeText(item.completion_date)}</span>
+                        </div>
+                    </div>
+                `).join('');
+            };
+
+            if (dashList) {
+                dashList.innerHTML = renderItemsHtml(items.slice(0, 10));
+            }
+
+            if (fullList) {
+                fullList.innerHTML = renderItemsHtml(items);
+            }
+        } catch (err) {
+            console.error('Error loading user history:', err);
+            if (dashList && !this.history.length) {
+                dashList.innerHTML = `<div style="color: #ef4444; font-size: 0.85rem; padding: 8px 0;">Error loading history: ${err.message}</div>`;
+            }
+            if (fullList && !this.history.length) {
+                fullList.innerHTML = `<div style="color: #ef4444; font-size: 0.85rem; padding: 8px 0;">Error loading history: ${err.message}</div>`;
+            }
+        }
     },
 
     async loadDashboard() {
@@ -3330,7 +4775,18 @@ const UserWorkManager = {
 
         tbody.innerHTML = this.villages.map((v, idx) => {
             const dateStr = v.assigned_at ? new Date(v.assigned_at).toLocaleDateString() : '—';
-            const workStatusBadge = '<span class="badge" style="background: #fef3c7; color: #92400e; border: 1px solid #fde68a; font-weight: 600;">Not Done</span>';
+            const isCorrection = (v.work_status === 'Correction Required' || v.kml_status === 'Correction Required');
+            let workStatusBadge = '';
+            if (isCorrection) {
+                workStatusBadge = `
+                    <span class="badge" style="background: #fff1f2; color: #e11d48; border: 1px solid #fecdd3; font-weight: 700; display: inline-flex; align-items: center; gap: 3px;">
+                        <i data-lucide="alert-circle" style="width: 12px; height: 12px;"></i> Correction Required
+                    </span>
+                    ${v.correction_reason ? `<div style="font-size: 0.72rem; color: #be123c; margin-top: 3px; max-width: 180px; white-space: normal;" title="${this.escapeText(v.correction_reason)}"><strong>Note:</strong> ${this.escapeText(v.correction_reason)}</div>` : ''}
+                `;
+            } else {
+                workStatusBadge = '<span class="badge" style="background: #fef3c7; color: #92400e; border: 1px solid #fde68a; font-weight: 600;">Not Done</span>';
+            }
 
             const saveBtnHtml = `
                 <button class="btn btn-sm js-save-${v.id}" onclick="UserWorkManager.openSurveyModal(${v.id})" title="Complete survey and save findings" style="padding: 5px 11px; font-size: 0.82rem; background: #10b981; border: 1px solid #059669; color: #ffffff; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; border-radius: 6px;">
@@ -3354,8 +4810,8 @@ const UserWorkManager = {
             } else {
                 actionHtml = `
                     <div style="display: inline-flex; gap: 6px; align-items: center; justify-content: center;">
-                        <button class="btn btn-sm btn-secondary js-ensure-link-${v.id}" onclick="UserWorkManager.ensureLink(${v.id}, this)" style="padding: 5px 11px; font-size: 0.82rem; display: inline-flex; align-items: center; gap: 5px;">
-                            <i data-lucide="link" style="width: 14px; height: 14px;"></i> Get Link
+                        <button class="btn btn-sm btn-primary js-open-review-${v.id}" onclick="UserWorkManager.openReviewLink(${v.id}, this)" style="padding: 5px 12px; font-size: 0.82rem; display: inline-flex; align-items: center; gap: 6px;" title="Open authentic review page on Village Wells marking portal">
+                            <i data-lucide="external-link" style="width: 14px; height: 14px;"></i> Open / Review
                         </button>
                         ${saveBtnHtml}
                     </div>
@@ -3401,6 +4857,17 @@ const UserWorkManager = {
         if (boresEl) boresEl.value = v.bores || 0;
         if (totalWellsEl) totalWellsEl.value = v.total_wells || ((v.dugwells || 0) + (v.bores || 0));
         if (remarkEl) remarkEl.value = v.remark || '';
+
+        const noticeEl = document.getElementById('surveyorCorrectionNotice');
+        const reasonEl = document.getElementById('surveyorCorrectionReasonText');
+        if (noticeEl && reasonEl) {
+            if (v.correction_reason) {
+                reasonEl.textContent = v.correction_reason;
+                noticeEl.style.display = 'block';
+            } else {
+                noticeEl.style.display = 'none';
+            }
+        }
 
         if (submitBtn) {
             submitBtn.disabled = false;
@@ -3455,8 +4922,9 @@ const UserWorkManager = {
             this.villages = this.villages.filter(item => item.id !== villageId);
             this.renderTable();
 
-            // Immediately update Surveyor metrics
+            // Immediately update Surveyor metrics and history
             await this.loadDashboard();
+            await this.loadHistory();
         } catch (err) {
             App.toast(`Save error: ${err.message}`, 'error');
             if (submitBtn) {
@@ -3480,6 +4948,7 @@ const UserWorkManager = {
                 App.toast(`🎉 Village "${data.data.village_name || ''}" is completed! Removed from active work list.`, 'success');
                 await this.loadAssignedVillages();
                 await this.loadDashboard();
+                await this.loadHistory();
             } else {
                 App.toast('Village is still pending (status is review, not finalized).', 'info');
                 if (btnEl) {
@@ -3498,28 +4967,42 @@ const UserWorkManager = {
         }
     },
 
-    async ensureLink(villageId, btnEl) {
+    async openReviewLink(villageId, btnEl) {
+        // Pre-open a tab synchronously on user click to avoid browser popup blockers
+        const newTab = window.open('about:blank', '_blank');
         if (btnEl) {
             btnEl.disabled = true;
-            btnEl.innerHTML = '<i data-lucide="loader-2" class="spin" style="width: 14px; height: 14px;"></i> Generating...';
+            btnEl.innerHTML = '<i data-lucide="loader-2" class="spin" style="width: 14px; height: 14px;"></i> Preparing...';
             lucide.createIcons();
         }
 
         try {
             const resp = await fetch(`/api/user/villages/${villageId}/ensure-link`, { method: 'POST' });
             const data = await resp.json();
-            if (!data.success) throw new Error(data.error);
+            if (!data.success || !data.link) throw new Error(data.error || 'Failed to prepare genuine review link');
 
-            App.toast('Review link generated successfully!', 'success');
-            await this.loadAssignedVillages();
+            const v = this.villages.find(item => item.id === villageId);
+            if (v) v.generated_review_url = data.link;
+
+            if (newTab) {
+                newTab.location.href = data.link;
+            } else {
+                window.open(data.link, '_blank');
+            }
+            this.renderTable();
         } catch (err) {
-            App.toast(`Link generation notice: ${err.message}`, 'error');
+            if (newTab) newTab.close();
+            App.toast(`Review link notice: ${err.message}`, 'error');
             if (btnEl) {
                 btnEl.disabled = false;
-                btnEl.innerHTML = '<i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i> Retry';
+                btnEl.innerHTML = '<i data-lucide="external-link" style="width: 14px; height: 14px;"></i> Open / Review';
                 lucide.createIcons();
             }
         }
+    },
+
+    async ensureLink(villageId, btnEl) {
+        return this.openReviewLink(villageId, btnEl);
     },
 
     async syncAndCheckCompletions(silent = false) {
@@ -3530,13 +5013,15 @@ const UserWorkManager = {
                 data.completed.forEach(c => {
                     App.toast(`🎉 Village "${c.village_name}" completed! Removed from active list.`, 'success');
                 });
-                // Reload table and dashboard
+                // Reload table, dashboard and history
                 await this.loadAssignedVillages();
                 await this.loadDashboard();
+                await this.loadHistory();
             } else if (!silent) {
                 App.toast('Checked status: No new completions detected.', 'info');
                 await this.loadAssignedVillages();
                 await this.loadDashboard();
+                await this.loadHistory();
             }
         } catch (e) {
             if (!silent) App.toast('Status check error: ' + e.message, 'warning');
@@ -3731,8 +5216,11 @@ const ReactiveSyncManager = {
 
                     if (App.currentView === 'user-dashboard') {
                         UserWorkManager.loadDashboard();
+                        UserWorkManager.loadHistory();
                     } else if (App.currentView === 'user-excel-files' && !this.isUserBusy()) {
                         UserWorkManager.loadAssignedVillages();
+                    } else if (App.currentView === 'user-history') {
+                        UserWorkManager.loadHistory();
                     }
                 }
             }
@@ -3759,6 +5247,19 @@ function getStatusBadgeClass(status) {
     }
 }
 
+
+// Global Window Scope Bindings
+window.App = App;
+window.ImportManager = ImportManager;
+if (typeof DashboardManager !== 'undefined') window.DashboardManager = DashboardManager;
+if (typeof VillagesManager !== 'undefined') window.VillagesManager = VillagesManager;
+if (typeof PersonManager !== 'undefined') window.PersonManager = PersonManager;
+if (typeof UserSettingsManager !== 'undefined') window.UserSettingsManager = UserSettingsManager;
+if (typeof QueueManager !== 'undefined') window.QueueManager = QueueManager;
+if (typeof AutomationManager !== 'undefined') window.AutomationManager = AutomationManager;
+if (typeof SettingsManager !== 'undefined') window.SettingsManager = SettingsManager;
+if (typeof UserWorkManager !== 'undefined') window.UserWorkManager = UserWorkManager;
+if (typeof AdminNotificationManager !== 'undefined') window.AdminNotificationManager = AdminNotificationManager;
 
 // Bootstrap Application on DOM Ready
 document.addEventListener('DOMContentLoaded', () => {
