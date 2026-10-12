@@ -1,2 +1,13 @@
 .env
 .env.example
+backups/
+.git/
+__pycache__/
+debug_screenshots/
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+test_*.py
+inspect_bulk.py
+scratch/
